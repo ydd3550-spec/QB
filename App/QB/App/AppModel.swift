@@ -22,6 +22,8 @@ final class AppModel {
     var scrollToTop: [AppTab: Int] = [:]
 
     let player = PlayerModel()
+    /// البحث: كلمته ونتايجه تبقى لين تغيّرها (الرجوع من صفحة فلم ما يعيد البحث)
+    let search = SearchModel()
 
     /// قائمة كمّل المشاهدة (تتحدّث بعد كل حفظ تقدّم)
     var continueWatching: [WatchProgress] = []
@@ -166,10 +168,19 @@ final class AppModel {
 
     func goBackFromSearch() {
         guard tab == .search else { return }
+        // التبديل لحظي وبدون أي تلاشي من النظام: الصفحة اللي سحبتها وصلت مكانها، فما لازم يتحرك شي ثاني.
+        // قبل كان التبويب يتلاشى ربع ثانية، فتطلع نسخة شفافة من الصفحة وتختفي
+        UIView.setAnimationsEnabled(false)
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) { tab = tabBeforeSearch }
-        searchBackdrop = nil
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            UIView.setAnimationsEnabled(true)
+            // صورة الصفحة اللي تحت البحث تنشال بعد ما يخلص التبديل (مو بنفس اللحظة)
+            try? await Task.sleep(for: .milliseconds(600))
+            if self.tab != .search { self.searchBackdrop = nil }
+        }
     }
 
     func binding(for t: AppTab) -> Binding<NavigationPath> {

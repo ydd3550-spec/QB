@@ -50,7 +50,20 @@ struct EdgeSwipeBack: ViewModifier {
                 }
         }
         .environment(\.layoutDirection, .leftToRight)
+        // رجعت للصفحة (فتحت البحث من جديد): تبدأ بمكانها، بدون حركة
+        .onAppear { reset() }
     }
+
+    private func reset() {
+        guard progress != 0 || leaving else { return }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            progress = 0
+            leaving = false
+        }
+    }
+
 
     /// الصفحة اللي قبل: تبدأ مزحومة لطرفها ومعتّمة، وتوصل مكانها مع آخر السحب
     @ViewBuilder
@@ -86,10 +99,11 @@ struct EdgeSwipeBack: ViewModifier {
                     Task {
                         try? await Task.sleep(for: .milliseconds(240))
                         action()
-                        var t = Transaction()
-                        t.disablesAnimations = true
-                        withTransaction(t) { progress = 0 }
-                        leaving = false
+                        // الصفحة تبقى برا الشاشة لين يخلص تبديل التبويب كله. قبل كانت ترجع مكانها بنفس اللحظة،
+                        // فتبان شفافة ربع ثانية فوق الصفحة اللي رجعت لها وتختفي
+                        try? await Task.sleep(for: .milliseconds(700))
+                        // بعد ما صارت مخفية (لو انفتحت من جديد بهالوقت، onAppear رجّعها قبل)
+                        reset()
                     }
                 } else {
                     // يرجع بنطّة خفيفة

@@ -417,6 +417,126 @@ extension View {
     func trackOverscroll(_ pull: Binding<CGFloat>) -> some View { modifier(OverscrollReader(pull: pull)) }
 }
 
+/// المسافة الفاضية فوق الطبقة داخل التمرير (سحب لتحت فوق أول الصفحة). صفر وقت التمرير العادي
+nonisolated private func gapAbove(_ proxy: GeometryProxy) -> CGFloat {
+    max(0, proxy.frame(in: .scrollView(axis: .vertical)).minY)
+}
+
+extension View {
+    /// صورة الرأس: لما تسحب لتحت تطول لفوق من تحت وتعبّي المسافة، بنفس شكل صفحة التفاصيل بالضبط
+    /// (صورة تعبّي إطار أطول = نفس الصورة مكبّرة من تحت). تنحسب مع كل إطار وقت الرسم نفسه،
+    /// بدون أي متغيّر ولا إعادة ترتيب للصفحة، فما تتأخر عن إصبعك ولا تنقز
+    func stretchesUp(height: CGFloat) -> some View {
+        visualEffect { content, proxy in
+            content.scaleEffect((height + gapAbove(proxy)) / height, anchor: .bottom)
+        }
+    }
+
+    /// يمشي مع أعلى الصورة الممطوطة (التعتيم اللي فوق)، بدون ما يتمطط
+    func followsStretchTop() -> some View {
+        visualEffect { content, proxy in
+            content.offset(y: -gapAbove(proxy))
+        }
+    }
+}
+
+/// قص من اليمين واليسار بس: الصورة تطول لفوق براحتها، وما يطلع منها شي برا عرض الشاشة
+nonisolated struct SideClip: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY - 4000, width: rect.width, height: rect.height + 4000))
+    }
+}
+
+/// السحب للتحديث فوق صورة عريضة تعبّي أعلى الشاشة: دائرة التحميل تطلع فوق الصورة نفسها
+/// (دائرة iOS العادية تنرسم ورا المحتوى فتختفي تحت الصورة). أول ما تتعدى الحد وانت ساحب:
+/// اهتزاز خفيف، تحميل حقيقي، والدائرة تختفي بنعومة بعده. الصفحة ترجع مكانها عادي بدون أي فراغ
+struct HeroPullToRefresh: ViewModifier {
+    let action: () async -> Void
+
+    /// كم لازم تسحب (نقطة) عشان يبدأ التحديث
+    private let threshold: CGFloat = 110
+
+    @State private var shown: CGFloat = 0
+    @State private var refreshing = false
+    /// قيم ما تنرسم: ما نعيد رسم شي عليها مع كل إطار
+    @State private var box = Box()
+
+    final class Box {
+        var dragging = false
+        var armed = true
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollPhaseChange { _, phase in
+                box.dragging = phase == .interacting
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                max(0, -(geo.contentOffset.y + geo.contentInsets.top))
+            } action: { _, pull in
+                handle(pull)
+            }
+            .overlay(alignment: .top) { indicator }
+    }
+
+    private func handle(_ pull: CGFloat) {
+        if refreshing { return }
+        if pull < 4 { box.armed = true }
+        if box.dragging, box.armed, pull >= threshold {
+            begin()
+            return
+        }
+        // الدائرة تبان شوي شوي مع السحب (بخطوات، مو مع كل إطار)
+        let p = box.armed ? (min(1, max(0, (pull - 24) / (threshold - 24))) * 10).rounded() / 10 : 0
+        if p != shown { shown = p }
+    }
+
+    private func begin() {
+        box.armed = false
+        refreshing = true
+        shown = 1
+        Haptics.tap()
+        Task { @MainActor in
+            let start = ContinuousClock.now
+            await action()
+            // تبقى ظاهرة شوي على الأقل عشان تنشاف
+            let minimum = Duration.milliseconds(700)
+            let spent = ContinuousClock.now - start
+            if spent < minimum { try? await Task.sleep(for: minimum - spent) }
+            withAnimation(.smooth(duration: 0.3)) {
+                refreshing = false
+                shown = 0
+            }
+        }
+    }
+
+    private var indicator: some View {
+        ZStack {
+            if refreshing {
+                ProgressView()
+                    .controlSize(.regular)
+                    .tint(.white)
+                    .transition(.opacity)
+            } else {
+                // قبل الحد: سهم ثابت يكمل دايرته مع السحب
+                Circle()
+                    .trim(from: 0, to: max(0.02, shown * 0.9))
+                    .stroke(.white, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 18, height: 18)
+            }
+        }
+        .frame(width: 40, height: 40)
+        .glassEffect(.regular, in: .circle)
+        .scaleEffect(0.6 + 0.4 * shown)
+        .opacity(shown)
+        .padding(.top, 8)
+        .allowsHitTesting(false)
+        .accessibilityHidden(!refreshing)
+        .accessibilityLabel(L("يحدّث"))
+    }
+}
+
 
 extension Glass {
     /// زجاج أبل الشفاف فوق الفيديو، مع لمسة غامقة خفيفة عشان الأيقونات تنقرأ على المشاهد الفاتحة

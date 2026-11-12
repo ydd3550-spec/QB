@@ -89,6 +89,9 @@ impl QBCore {
     pub async fn home_rows(&self) -> Result<Vec<CatalogRow>, CoreError> {
         self.core.home_rows().await
     }
+    pub async fn home_rows_fresh(&self) -> Result<Vec<CatalogRow>, CoreError> {
+        self.core.home_rows_fresh().await
+    }
     pub fn discover_catalogs(&self) -> Vec<DiscoverCatalog> {
         self.core
             .discover_catalogs()

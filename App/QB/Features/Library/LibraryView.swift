@@ -45,6 +45,12 @@ struct LibraryView: View {
                     }
                     .padding(.vertical, 12)
                 }
+                // على الصفحة نفسها بس (لو على كل التنقل كانت صفحات التفاصيل اللي تنفتح من هنا تحدّث المكتبة بدالها)
+                .refreshable {
+                    reload()
+                    // القراءة من الجهاز لحظية: الدائرة تبقى شوي عشان تنشاف وترجع الصفحة بنعومة
+                    try? await Task.sleep(for: .milliseconds(450))
+                }
                 .onChange(of: app.scrollToTop[.library]) { _, _ in
                     withAnimation(Motion.soft) { proxy.scrollTo("top", anchor: .top) }
                 }
@@ -54,7 +60,6 @@ struct LibraryView: View {
             .qbNavBar()
             .mediaDestinations(zoom)
             .task(id: app.libraryVersion) { reload() }
-            .refreshable { reload() }
         }
     }
 

@@ -85,6 +85,8 @@ struct RemoteImage: View {
 
     @State private var image: UIImage?
     @State private var failed = false
+    /// رابط الصورة المعروضة الحين
+    @State private var loadedURL: String?
 
     var body: some View {
         ZStack {
@@ -116,8 +118,11 @@ struct RemoteImage: View {
             failed = true
             return
         }
+        // رجعت الصفحة تبان (رجوع من صفحة ثانية): الصورة نفسها معروضة، لا نمسحها ونعيد تحميلها
+        if image != nil, loadedURL == url { return }
         if let hit = ImagePipeline.shared.cached(u, maxPixel: maxPixel) {
             image = hit
+            loadedURL = url
             return
         }
         image = nil
@@ -128,5 +133,6 @@ struct RemoteImage: View {
             image = loaded
             failed = loaded == nil
         }
+        loadedURL = loaded == nil ? nil : url
     }
 }

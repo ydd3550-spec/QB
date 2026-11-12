@@ -19,23 +19,12 @@ struct HomeView: View {
                         VStack(spacing: 0) {
                             Color.clear.frame(height: 0).id("top")
                             if let hero = heroItem {
-                                HeroBanner(item: hero, namespace: zoom, pull: max(pull, heroGap))
+                                // الصورة تتمطّط لفوق بنفسها وقت الرسم (سحب لتحت أو وقت التحديث)، بدون متغيّرات تعيد رسم الصفحة
+                                HeroBanner(item: hero, namespace: zoom)
                                     .id(hero.id)
-                                    // وقت التحديث المحتوى كله ينزل تحت دائرة التحديث: نقيس المسافة فوق البانر نفسه
-                                    // عشان الصورة تطول وتعبّيها، والدائرة تطلع فوق الصورة مو في شريط فاضي
-                                    .onGeometryChange(for: CGFloat.self) { g in
-                                        max(0, (g.frame(in: .scrollView(axis: .vertical)).minY * 2).rounded() / 2)
-                                    } action: { gap in
-                                        if gap != heroGap { heroGap = gap }
-                                    }
                                     .transition(.opacity)
                             } else if loading || !app.ready {
-                                HeroPlaceholder(pull: max(pull, heroGap))
-                                    .onGeometryChange(for: CGFloat.self) { g in
-                                        max(0, (g.frame(in: .scrollView(axis: .vertical)).minY * 2).rounded() / 2)
-                                    } action: { gap in
-                                        if gap != heroGap { heroGap = gap }
-                                    }
+                                HeroPlaceholder()
                                     .transition(.opacity)
                             }
                         }
@@ -65,8 +54,8 @@ struct HomeView: View {
                     .containerRelativeFrame(.horizontal)
                 }
                 .ignoresSafeArea(edges: (heroItem == nil && !loading && app.ready) ? [] : .top)
-                // نفس سحب صفحة التفاصيل بالضبط
-                .trackOverscroll($pull)
+                // السحب للتحديث: الدائرة تطلع فوق الصورة نفسها، مع اهتزاز خفيف وتحميل حقيقي من الشبكة
+                .modifier(HeroPullToRefresh { await load(force: true) })
                 .onScrollGeometryChange(for: Bool.self) { geo in
                     geo.contentOffset.y + geo.contentInsets.top > 420
                 } action: { _, past in
@@ -91,15 +80,10 @@ struct HomeView: View {
             .toolbarBackgroundVisibility(scrolledPastHero ? .visible : .hidden, for: .navigationBar)
             .mediaDestinations(zoom)
             .task(id: app.addonsVersion) { await load(force: false) }
-            .refreshable { await load(force: true) }
         }
     }
 
     @State private var scrolledPastHero = false
-    @State private var pull: CGFloat = 0
-    @State private var heroGap: CGFloat = 0
-
-    /// السحب لتحت فوق البانر: الصورة تتمطّط وتعبّي الفراغ
 
     /// آخر بانر محفوظ: يطلع أول ما يفتح التطبيق لين توصل الرفوف
     @State private var cachedHero: MetaPreview? = HeroCache.atLaunch
@@ -120,7 +104,8 @@ struct HomeView: View {
         loading = true
         error = nil
         do {
-            let result = try await core.homeRows()
+            // السحب للتحديث يجيب من الشبكة نفسها (مو من المحفوظ اللي يبقى 30 دقيقة)
+            let result = try await (force ? core.homeRowsFresh() : core.homeRows())
             let fresh = result.filter { !$0.items.isEmpty }
             // نحفظ البانر وصورته للمرة الجاية (بالخلفية، ما نأخر الرفوف)
             if let first = fresh.first, let hero = first.items.first(where: { $0.background != nil }) ?? first.items.first {
@@ -142,7 +127,6 @@ struct HeroBanner: View {
     @Environment(AppModel.self) private var app
     let item: MetaPreview
     let namespace: Namespace.ID
-    var pull: CGFloat = 0
 
     var body: some View {
         let ref = MediaRef(item, zoomID: "hero-\(item.id)")
@@ -152,14 +136,15 @@ struct HeroBanner: View {
                 // (أو وقت التحديث) تطول لفوق من تحت وتعبّي المسافة كلها، فما يطلع فوقها فراغ
                 Color.clear
                     .frame(height: 540)
-                    .overlay(alignment: .bottom) {
-                        // الصورة داخل إطار بعرض الشاشة بالضبط: ما تطلع حوافها ولا تدفّ الصفحة وانت تسحب
+                    .overlay {
+                        // الصورة بإطار بعرض الشاشة بالضبط، وتكبر من تحت لفوق بقد السحب (نفس شكل صفحة التفاصيل)
                         Color.clear
-                            .frame(height: 540 + pull)
                             .overlay { HeroImage(url: item.background ?? item.poster) }
                             .clipped()
-                            .overlay(alignment: .top) { Palette.topScrim.frame(height: 140) }
+                            .stretchesUp(height: 540)
                     }
+                    .overlay(alignment: .top) { Palette.topScrim.frame(height: 140).followsStretchTop() }
+                    .clipShape(SideClip())
                     .overlay(alignment: .bottom) { Palette.scrim.frame(height: 300) }
 
                 VStack(alignment: .leading, spacing: 12) {

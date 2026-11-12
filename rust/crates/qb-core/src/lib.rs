@@ -120,6 +120,20 @@ impl Core {
         Ok(v)
     }
 
+    /// من الشبكة مباشرة (السحب للتحديث)، ويحدّث المحفوظ. لو فشلت الشبكة نرجع للمحفوظ عشان ما تفضى الرفوف
+    async fn fresh_json(&self, kind: CacheKind, url: &str) -> Result<serde_json::Value, CoreError> {
+        match self.inner.client.net.get_json(url).await {
+            Ok(v) => {
+                self.inner.cache.put(kind, url, v.clone()).await;
+                Ok(v)
+            }
+            Err(e) => match self.inner.cache.get(kind, url).await {
+                Some(v) => Ok(v),
+                None => Err(e),
+            },
+        }
+    }
+
     pub async fn clear_cache(&self) {
         self.inner.cache.clear().await;
         self.inner.health.clear();
@@ -191,8 +205,12 @@ impl Core {
     // ---------- الرئيسية واكتشف ----------
 
     async fn fetch_catalog(&self, m: &Manifest, kind: &str, catalog_id: &str, extra: &[(String, String)]) -> Result<Vec<MetaPreview>, CoreError> {
+        self.fetch_catalog_with(m, kind, catalog_id, extra, false).await
+    }
+
+    async fn fetch_catalog_with(&self, m: &Manifest, kind: &str, catalog_id: &str, extra: &[(String, String)], fresh: bool) -> Result<Vec<MetaPreview>, CoreError> {
         let url = qb_protocol::resource_url(&m.transport_url, "catalog", kind, catalog_id, extra);
-        let v = self.cached_json(CacheKind::Catalog, &url).await?;
+        let v = if fresh { self.fresh_json(CacheKind::Catalog, &url).await? } else { self.cached_json(CacheKind::Catalog, &url).await? };
         // بعض الإضافات ترجّع نفس العنوان مرتين بالصفحة؛ التكرار يلخبط القوائم بالواجهة
         let metas = qb_protocol::parse_metas(&v, &m.name, MediaKind::parse(kind).unwrap_or(MediaKind::Movie));
         Ok(flatten_unique(metas, None, usize::MAX))
@@ -200,6 +218,15 @@ impl Core {
 
     /// رفوف الرئيسية: كل كتالوج ما يحتاج extra إجباري، بالتوازي، بترتيب الإضافات
     pub async fn home_rows(&self) -> Result<Vec<CatalogRow>, CoreError> {
+        self.home_rows_with(false).await
+    }
+
+    /// السحب للتحديث: نفس الرفوف بس من الشبكة مو من المحفوظ (المحفوظ يبقى 30 دقيقة)
+    pub async fn home_rows_fresh(&self) -> Result<Vec<CatalogRow>, CoreError> {
+        self.home_rows_with(true).await
+    }
+
+    async fn home_rows_with(&self, fresh: bool) -> Result<Vec<CatalogRow>, CoreError> {
         let mut jobs: Vec<(Manifest, CatalogDef)> = Vec::new();
         for m in self.enabled_addons() {
             for c in m.catalogs.iter().filter(|c| !c.requires_extra && MediaKind::parse(&c.kind).is_some()) {
@@ -213,7 +240,7 @@ impl Core {
             for (i, (m, c)) in jobs.into_iter().enumerate() {
                 let me = self.clone();
                 set.spawn(async move {
-                    let items = me.fetch_catalog(&m, &c.kind, &c.id, &[]).await;
+                    let items = me.fetch_catalog_with(&m, &c.kind, &c.id, &[], fresh).await;
                     (i, m, c, items)
                 });
             }
