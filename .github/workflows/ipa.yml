@@ -1,0 +1,83 @@
+name: QB unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [build9]
+
+jobs:
+  ipa:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
+      QB_TARGETS: aarch64-apple-ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          X=$(ls -d /Applications/Xcode*.app | grep -v -i beta | sort -V | tail -1)
+          sudo xcode-select -s "$X"
+          xcodebuild -version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Install Rust + iOS target
+        run: |
+          command -v rustup >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          source "$HOME/.cargo/env" || true
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios
+          rustc --version
+
+      - name: Build Rust core (XCFramework + Swift bindings)
+        run: ./scripts/build-core.sh
+
+      - name: Generate project + pods
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          python3 scripts/gen-strings.py
+          xcodegen generate
+          pod install --repo-update
+
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          mkdir -p build
+          defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
+          xcodebuild -workspace QB.xcworkspace -scheme QB -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            build 2>&1 | tee build/xcodebuild.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " || true
+          grep -q "BUILD SUCCEEDED" build/xcodebuild.log || { echo "---- errors ----"; grep -E "error:" build/xcodebuild.log | sort -u | head -200; exit 1; }
+
+      - name: Package IPA
+        run: |
+          APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "QB.app" | head -1)
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          mkdir -p build/ipa && zip -qry build/ipa/QB.ipa Payload
+          ls -la build/ipa
+          unzip -l build/ipa/QB.ipa | grep -E "QB.app/(QB|Info.plist)$|PlugIns/QBWidget.appex/QBWidget$|Frameworks/MobileVLCKit" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qb-build
+          path: |
+            build/ipa/QB.ipa
+            build/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 3
