@@ -9,6 +9,10 @@ nonisolated enum HeroCache {
     /// يُقرأ من القرص مرة وحدة بس عند فتح التطبيق
     static let atLaunch: MetaPreview? = loadAndWarm()
 
+    /// آخر بانر عرضته الرئيسية في هذي الجلسة (بالذاكرة): لو انبنت الرئيسية من جديد ترجع بنفس البانر
+    /// ونفس الصورة من أول إطار، بدل البانر القديم المحفوظ من فتحة التطبيق
+    @MainActor static var latest: MetaPreview?
+
     private struct Stored: Codable {
         var id, kind, name: String
         var poster, background, logo, description, releaseInfo, imdbRating: String?
@@ -74,6 +78,20 @@ struct HeroImage: View {
     @State private var image: UIImage?
     @State private var sharp = false
 
+    /// الصورة من الذاكرة من أول إطار: لو ننتظر .task (يشتغل بعد أول رسم) يطلع إطار وحده فيه اللمعة الفاتحة،
+    /// وهذي هي الومضة البيضا لما ترجع للرئيسية من البحث
+    init(url: String?) {
+        self.url = url
+        if let url, let full = URL(string: url),
+           let hit = ImagePipeline.shared.cached(full, maxPixel: HeroCache.pixel) {
+            _image = State(initialValue: hit)
+            _sharp = State(initialValue: true)
+        } else if let url, let p = HeroCache.previewURL(for: url), let pu = URL(string: p),
+                  let small = ImagePipeline.shared.cached(pu, maxPixel: 700) {
+            _image = State(initialValue: small)
+        }
+    }
+
     var body: some View {
         ZStack {
             // اللمعة تنشال كليًا لما تطلع الصورة (ما تظل شغّالة بالخلفية)
@@ -95,8 +113,15 @@ struct HeroImage: View {
     private func load() async {
         guard let url, let full = URL(string: url) else { return }
         if let hit = ImagePipeline.shared.cached(full, maxPixel: HeroCache.pixel) {
-            image = hit
-            sharp = true
+            // نفس الصورة معروضة: ما نلمسها (لا تلاشي ولا إعادة رسم)
+            if image !== hit {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) {
+                    image = hit
+                    sharp = true
+                }
+            }
             return
         }
         // الصغيرة والكاملة بنفس الوقت

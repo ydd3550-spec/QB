@@ -144,7 +144,7 @@ final class PlayerModel {
         let changedTitle = freshTitle || self.context?.streamId != context.streamId
         self.context = context
         if changedTitle {
-            videoFill = false
+            // التكبير يتذكّره طول ما التطبيق مفتوح (مثل يوتيوب)، ما يرجع للأصلي مع كل فيلم
             externalSubtitles = []
             subtitleChosenByUser = false
             selectedExternal = nil
@@ -184,7 +184,8 @@ final class PlayerModel {
         elapsed = startAt
         duration = nil
         isLive = false
-        videoSize = .zero
+        // وقت الاستعادة نخلي مقاس الفيديو مثل ما هو، عشان التكبير ما يرجع للأصلي ويكبر من جديد
+        if pendingRestore == nil { videoSize = .zero }
         audioTracks = []
         embeddedSubtitles = []
         selectedAudio = nil
@@ -446,12 +447,24 @@ final class PlayerModel {
         guard let source else { return }
         let position = elapsed
         noteFailure(failure, source: source, position: position)
+        var isDrop = true
+        if case .nativeCannotPlay = failure { isDrop = reportedOk }
+        let canRecover = isDrop && (reportedOk || pendingRestore != nil) && recoveryAttempts < 2
+        if !canRecover {
+            pendingRestore = nil
+            isReloading = false
+        }
         switch failure {
-        case .nativeCannotPlay where remuxedSourceId == source.id:
+        case .nativeCannotPlay where remuxedSourceId == source.id && !canRecover:
             // the remuxed stream didn't play natively: same second in VLC, quietly (source itself is fine)
             remuxFailed.insert(source.id)
             closeRemux()
             start(source, startAt: position, forceVLC: true)
+        case _ where canRecover:
+            // المصدر كان شغّال وانقطع (رجوع من الخلفية، النت فصل، الرابط انتهى): نستعيده هو نفسه بهدوء
+            // من نفس الثانية بدل ما نقول "المصدر ما اشتغل" وننقل لغيره
+            let keep = pendingRestore?.keepPaused ?? false
+            recoverSource(reason: "failure", keepPaused: keep)
         case .sourceFailed where remuxedSourceId == source.id && !reportedOk:
             remuxFailed.insert(source.id)
             closeRemux()
@@ -551,6 +564,8 @@ final class PlayerModel {
     func dismissResumeHint() { resumedFrom = nil }
 
     private func fail(_ message: String) {
+        pendingRestore = nil
+        isReloading = false
         stopEngine()
         errorMessage = message
         state = .failed(message)
@@ -587,6 +602,192 @@ final class PlayerModel {
         guard let source else { return }
         triedSources.remove(source.id)
         start(source, startAt: elapsed, forceVLC: source.engine == .vlc || engineName == "VLC")
+    }
+
+    // MARK: - إعادة التحميل والاستعادة (زر التحديث، الرجوع من الخلفية، انقطاع مصدر كان شغّال)
+
+    /// وش كان مختار قبل إعادة التحميل، نرجّعه أول ما تجهز المسارات بالمشغّل الجديد
+    private struct PendingRestore {
+        var audio: String?
+        var embedded: String?
+        var pgs: Int?
+        var keepPaused: Bool
+        var audioDone = false
+        var subtitleDone = false
+        var pauseDone = false
+        let since = Date()
+    }
+
+    private var pendingRestore: PendingRestore?
+    /// كم مرة استعدنا نفس المصدر بدون ما يشتغل بينها (عشان ما نلف للأبد على مصدر خربان)
+    private var recoveryAttempts = 0
+    private var lastRecoveryAt: Date?
+    /// زر التحديث شغّال (يطلع مكانه مؤشر صغير)
+    private(set) var isReloading = false
+    /// وقت ما راح التطبيق للخلفية، وهل كان شغّال قبلها
+    private var backgroundedAt: Date?
+    private var playingBeforeBackground = false
+    /// وقت ما بدأ التقطّع (شغّال بس الوقت واقف)
+    private var stalledSince: Date?
+
+    /// زر التحديث: نفس المصدر ونفس الثانية ونفس الصوت والترجمة والسرعة، بدون ما ينقفل المشغّل
+    func reloadInPlace() {
+        guard source != nil, !isReloading else { return }
+        recoveryAttempts = 0
+        recoverSource(reason: "manual", keepPaused: !(isPlaying || state == .loading) && errorMessage == nil && reportedOk)
+    }
+
+    /// يعيد بناء المشغّل لنفس المصدر من نفس الثانية. لو المصدر نفسه ما رد (الرابط انتهى) نطلب روابط المصادر
+    /// من جديد بهدوء ونكمّل بنفس المصدر برابطه الجديد. ما تطلع رسالة "ما فيه مصدر" إلا لو فعلًا ما فيه شي يشتغل
+    private func recoverSource(reason: String, keepPaused: Bool) {
+        guard let source else { return }
+        let position = max(0, elapsed)
+        recoveryAttempts += 1
+        lastRecoveryAt = Date()
+        isReloading = true
+        stalledSince = nil
+        let wasVLC = engineName == "VLC"
+        if let prev = pendingRestore {
+            // استعادة داخل استعادة: المسارات الحالية انمسحت مع المشغّل الجديد، فنكمّل باللي كان محفوظ
+            pendingRestore = PendingRestore(audio: prev.audio, embedded: prev.embedded, pgs: prev.pgs,
+                                            keepPaused: prev.keepPaused || keepPaused)
+        } else {
+            pendingRestore = PendingRestore(audio: selectedAudio,
+                                            embedded: selectedPGS == nil ? selectedEmbedded : nil,
+                                            pgs: selectedPGS,
+                                            keepPaused: keepPaused)
+        }
+        coreLog.info("player recover (\(reason, privacy: .public)) attempt \(self.recoveryAttempts) at \(position)")
+        triedSources.remove(source.id)
+        errorMessage = nil
+        if recoveryAttempts <= 1 {
+            start(source, startAt: position, forceVLC: wasVLC, forceNative: !wasVLC && manualNative == true)
+        } else {
+            // المرة الثانية: الرابط نفسه غالبًا انتهى. نجيب روابط جديدة لنفس العمل ونلقى نفس المصدر فيها
+            reresolve(source, position: position, wasVLC: wasVLC)
+        }
+        if keepPaused, let engine { engine.setVolume(0) }
+    }
+
+    private func reresolve(_ old: RankedSource, position: Double, wasVLC: Bool) {
+        guard let core, let context else {
+            start(old, startAt: position, forceVLC: wasVLC)
+            return
+        }
+        stopEngine()
+        state = .loading
+        isBuffering = true
+        let kind = context.ref.kind
+        let streamId = context.streamId
+        Task { [weak self] in
+            var fresh: [RankedSource] = []
+            let stream = CoreClient.sources(core, kind: kind, id: streamId)
+            let deadline = Date().addingTimeInterval(15)
+            for await event in stream {
+                if case let .sources(list) = event { fresh = list }
+                if case .finished = event { break }
+                if fresh.contains(where: { Self.sameSource($0, old) }) || Date() > deadline { break }
+            }
+            guard let self, self.context?.streamId == streamId, self.source?.id == old.id || self.source == nil else { return }
+            let match = fresh.first { Self.sameSource($0, old) }
+            if let match {
+                if var ctx = self.context, !fresh.isEmpty {
+                    ctx.sources = fresh
+                    self.context = ctx
+                }
+                self.start(match, startAt: position, forceVLC: wasVLC)
+                if self.pendingRestore?.keepPaused == true { self.engine?.setVolume(0) }
+            } else {
+                // ما رجع نفس المصدر: نرجع لمسار الفشل العادي (يجرب اللي بعده، وبعدها بس تطلع الرسالة)
+                self.isReloading = false
+                self.pendingRestore = nil
+                self.source = old
+                self.handle(.sourceFailed(L("الرابط انتهى")))
+            }
+        }
+    }
+
+    /// نفس المصدر حتى لو تغيّر رابطه (الرابط فيه توكن يتجدد): نفس الإضافة والعنوان والوصف والجودة
+    nonisolated private static func sameSource(_ a: RankedSource, _ b: RankedSource) -> Bool {
+        if a.id == b.id { return true }
+        return a.addon == b.addon && a.title == b.title && a.description == b.description && a.quality == b.quality
+    }
+
+    /// المشغّل الجديد جهز: نرجّع الصوت والترجمة، ولو كان واقف نوقفه بعد ما تطلع أول صورة.
+    /// كل خطوة تنحفظ قبل ما نكلّم المشغّل، لأن اختيار مسار ينادي readTracks من جديد (وما نبيها تتكرر)
+    private func applyPendingRestore() {
+        guard var r = pendingRestore, let engine else { return }
+        if Date().timeIntervalSince(r.since) > 20 {
+            finishRestore()
+            return
+        }
+        if !r.audioDone, !audioTracks.isEmpty {
+            r.audioDone = true
+            pendingRestore = r
+            if let a = r.audio, a != selectedAudio, audioTracks.contains(where: { $0.id == a }) {
+                engine.selectAudio(a)
+            }
+        }
+        if !r.subtitleDone, !audioTracks.isEmpty || !embeddedSubtitles.isEmpty || remuxInfo != nil {
+            if let pgs = r.pgs {
+                if remuxURL != nil, remuxInfo != nil {
+                    r.subtitleDone = true
+                    pendingRestore = r
+                    (engine as? NativeEngine)?.deselectLegible()
+                    selectPGS(pgs)
+                }
+            } else if let e = r.embedded {
+                if embeddedSubtitles.contains(where: { $0.id == e }) {
+                    r.subtitleDone = true
+                    pendingRestore = r
+                    if engine.selectedEmbeddedSubtitle != e { engine.selectEmbeddedSubtitle(e) }
+                }
+            } else {
+                r.subtitleDone = true
+                pendingRestore = r
+                // ما كان فيه ترجمة داخلية: نطفي اللي يختارها المشغّل الجديد لحاله (عشان ما تطلع مع الخارجية)
+                if engine.selectedEmbeddedSubtitle != nil, selectedExternal != nil || subtitleChosenByUser {
+                    engine.selectEmbeddedSubtitle(nil)
+                }
+            }
+        }
+        guard pendingRestore != nil else { return }
+        if r.keepPaused, !r.pauseDone, engine.state == .playing {
+            r.pauseDone = true
+            pendingRestore = r
+            engine.setVolume(0)
+            // نخليه يرسم أول صورة ثم نوقفه، فترجع لنفس الصورة واقفة بدل شاشة سودا
+            let token = ObjectIdentifier(engine)
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(350))
+                guard let self, let e = self.engine, ObjectIdentifier(e) == token else { return }
+                e.pause()
+                e.setVolume(self.softwareVolume)
+                self.sync()
+                self.finishRestoreIfDone()
+            }
+            return
+        }
+        pendingRestore = r
+        finishRestoreIfDone()
+    }
+
+    private func finishRestoreIfDone() {
+        guard let r = pendingRestore else { return }
+        if Date().timeIntervalSince(r.since) > 20 {
+            finishRestore()
+            return
+        }
+        let subsDone = r.subtitleDone || Date().timeIntervalSince(r.since) > 6
+        if r.audioDone || Date().timeIntervalSince(r.since) > 6, subsDone, !r.keepPaused || r.pauseDone {
+            if engine?.state == .playing || engine?.state == .paused || !r.keepPaused { finishRestore() }
+        }
+    }
+
+    private func finishRestore() {
+        if pendingRestore?.keepPaused == true { engine?.setVolume(softwareVolume) }
+        pendingRestore = nil
+        isReloading = false
     }
 
     /// The engine picker in the player: reopen the same source in the chosen engine from the same second
@@ -748,7 +949,6 @@ final class PlayerModel {
         stopEngine()
         context = nil
         source = nil
-        videoFill = false
         state = .idle
         errorMessage = nil
         nextUp = nil
@@ -777,7 +977,9 @@ final class PlayerModel {
 
     /// المصغّر يعرض الحجم الأصلي دايمًا، والتكبير يرجع أول ما ترجع شاشة المشغّل
     private func applyZoom() {
-        engine?.setVideoFill(videoFill && coverOnScreen, viewport: zoomViewport)
+        // التكبير صار رسم فوق الفيديو (في شاشة المشغّل نفسها)، فالمشغّل يبقى دايم بالحجم الأصلي:
+        // ما فيه قص من VLC ولا تغيير بـ videoGravity يخلّي الصورة تنط أو تتمطط
+        engine?.setVideoFill(false, viewport: zoomViewport)
     }
 
     func didDismiss() {
@@ -826,12 +1028,24 @@ final class PlayerModel {
         switch phase {
         case .background:
             saveProgress(force: true)
+            backgroundedAt = Date()
+            playingBeforeBackground = isPlaying
             // VLC ما يدعم صورة داخل صورة، نوقفه بدل ما يرسم بالخلفية
             if engineName == "VLC" { pause() }
         case .active:
             AudioSessionKeeper.shared.activate(force: true)
             engine?.refreshLayout()
             sync()
+            settleEngine()
+            let wasInBackground = backgroundedAt != nil
+            backgroundedAt = nil
+            lastForeground = Date()
+            // VLC: مخرج الصورة واتصاله ما يعيشون بعد الخلفية (هذا سبب الشاشة السودا والتعليق). نبنيه من جديد
+            // بنفس المصدر والثانية والمسارات، ويبقى واقف مثل ما تركته (نوقفه احنا وقت الخلفية)
+            if wasInBackground, engineName == "VLC", !pipActive, errorMessage == nil, source != nil, !isReloading {
+                recoveryAttempts = 0
+                recoverSource(reason: "foreground", keepPaused: true)
+            }
             // رجعت للتطبيق والفيديو بالصورة: نرجّعه للمشغّل بنفس المكان وهو شغّال
             if pipActive {
                 miniHidden = false
@@ -868,9 +1082,12 @@ final class PlayerModel {
         if state != engine.state, engine.state != .idle { state = engine.state }
         updateCue()
         let waiting = state == .loading || (isBuffering && !reportedOk)
-        let shouldOffer = waiting && Date().timeIntervalSince(loadingSince) > 5
+        // وقت الاستعادة نعطيه وقت أطول قبل ما نعرض "جرّب مصدر ثاني" (المصدر نفسه شغّال، بس يرجع يتصل)
+        let shouldOffer = waiting && Date().timeIntervalSince(loadingSince) > (pendingRestore != nil ? 12 : 5)
+        if pendingRestore != nil { finishRestoreIfDone() }
         if showTryAnother != shouldOffer { showTryAnother = shouldOffer }
         if isPlaying { saveProgress(force: false) }
+        watchStall()
         // وقّف (إيقاف مؤقت أو انقطع): نحفظ المكان على طول
         if wasPlayingAtSync, !isPlaying { saveProgress(force: true) }
         wasPlayingAtSync = isPlaying
@@ -882,14 +1099,36 @@ final class PlayerModel {
         }
     }
 
+    /// شغّال بس ما يتقدّم (بعد الرجوع من الخلفية غالبًا الاتصال مات): نستعيد نفس المصدر بهدوء
+    private func watchStall() {
+        if let at = lastRecoveryAt, recoveryAttempts > 0, state == .playing, !isBuffering,
+           Date().timeIntervalSince(at) > 30 {
+            recoveryAttempts = 0
+        }
+        guard reportedOk, pendingRestore == nil, !isReloading, engine != nil else { stalledSince = nil; return }
+        let stuck = state == .stalled || (state == .playing && isBuffering)
+        guard stuck else { stalledSince = nil; return }
+        if stalledSince == nil { stalledSince = Date() }
+        let justBack = backgroundedAt == nil && lastForeground.map { Date().timeIntervalSince($0) < 20 } == true
+        let limit: Double = justBack ? 6 : 20
+        if let since = stalledSince, Date().timeIntervalSince(since) > limit, recoveryAttempts < 2 {
+            recoverSource(reason: "stall", keepPaused: false)
+        }
+    }
+
+    private var lastForeground: Date?
+
     private func engineStateChanged(_ s: PlaybackState) {
         state = s
         switch s {
         case .playing:
             settleEngine()
             if !reportedOk { reportFirstPlay() }
+            if pendingRestore != nil { applyPendingRestore() } else { isReloading = false }
         case .paused:
+            settleEngine()
             saveProgress(force: true)
+            if pendingRestore != nil { finishRestoreIfDone() }
         case .ended:
             finished()
         default:
@@ -1073,7 +1312,8 @@ final class PlayerModel {
         selectedAudio = engine.selectedAudio
         embeddedSubtitles = subs
         selectedEmbedded = embedded
-        autoSelectPGS()
+        if pendingRestore == nil { autoSelectPGS() }
+        if pendingRestore != nil { applyPendingRestore() }
     }
 
     func selectAudio(_ id: String) {

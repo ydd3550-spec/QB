@@ -88,15 +88,25 @@ protocol PlaybackEngine: AnyObject {
 
 /// يركّب منظر المشغّل داخل أي مكان (المشغّل الكامل أو المصغّر).
 /// آخر واحد ينضاف للنافذة ياخذ الفيديو، وما نوقف التشغيل لما ينشال.
+///
+/// التكبير وقص الزوايا هنا بـ UIKit نفسه: طبقة AVPlayerLayer ومنظر VLC ما يتقصّون بقناع SwiftUI،
+/// فنقصّهم بطبقة هذا المنظر (نفس نصف قطر زوايا البطاقة بالضبط)، ونكبّر الفيديو داخلها بتحويل رسم بس
+/// (نفس النسبة بالطول والعرض، من النص)، فمقاس منظر المشغّل ما يتغيّر أبدًا وما ينعاد بناء الصورة.
 final class SurfaceHostView: UIView {
     weak var surface: UIView? {
         didSet { attach() }
+    }
+
+    /// تكبير الفيديو داخل الشاشة (1 = الحجم الأصلي)
+    var zoom: CGFloat = 1 {
+        didSet { if zoom != oldValue { applyZoom() } }
     }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .black
         clipsToBounds = true
+        layer.cornerCurve = .continuous
         isUserInteractionEnabled = false
     }
 
@@ -112,29 +122,75 @@ final class SurfaceHostView: UIView {
         guard let surface, window != nil || superview != nil else { return }
         if surface.superview !== self {
             surface.removeFromSuperview()
+            surface.transform = .identity
             surface.frame = bounds
-            surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            surface.autoresizingMask = []
             addSubview(surface)
         }
+        place(surface)
+        applyZoom()
+    }
+
+    /// بالمقاس والنص بس (مو frame): الـ frame مع تحويل غير الأصلي يخرب الحساب
+    private func place(_ surface: UIView) {
+        if surface.bounds.size != bounds.size { surface.bounds = CGRect(origin: .zero, size: bounds.size) }
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        if surface.center != c { surface.center = c }
+    }
+
+    private func applyZoom() {
+        guard let surface, surface.superview === self else { return }
+        let t = zoom == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: zoom, y: zoom)
+        if surface.transform != t { surface.transform = t }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let surface, surface.superview === self { surface.frame = bounds }
+        if let surface, surface.superview === self {
+            place(surface)
+            applyZoom()
+        }
+    }
+
+    /// المنظر يتشال من هنا (يروح للمصغّر أو لمشغّل جديد): يرجع بدون تكبير
+    override func willRemoveSubview(_ subview: UIView) {
+        super.willRemoveSubview(subview)
+        subview.transform = .identity
     }
 }
 
 struct EngineSurface: UIViewRepresentable {
     let surface: UIView?
+    /// تكبير الفيديو (1 = الحجم الأصلي). يتحرّك مع حركة SwiftUI نفسها (نفس الـ spring)
+    var zoom: CGFloat = 1
+    /// زوايا البطاقة وقت السحب لتحت، تتقصّ فيها الصورة نفسها
+    var cornerRadius: CGFloat = 0
+    /// تختفي الصورة نفسها (طبقة الفيديو ما تلحق opacity حق SwiftUI دايمًا وقت دوران الشاشة)
+    var hidden = false
 
     func makeUIView(context: Context) -> SurfaceHostView {
         let v = SurfaceHostView()
         v.surface = surface
+        v.zoom = zoom
+        v.layer.cornerRadius = cornerRadius
         return v
     }
 
     func updateUIView(_ uiView: SurfaceHostView, context: Context) {
         if uiView.surface !== surface { uiView.surface = surface }
+        if uiView.isHidden != hidden { uiView.isHidden = hidden }
+        let changes = uiView.zoom != zoom || uiView.layer.cornerRadius != cornerRadius
+        guard changes else { return }
+        let apply = {
+            uiView.zoom = zoom
+            uiView.layer.cornerRadius = cornerRadius
+        }
+        if context.transaction.animation != nil, !context.transaction.disablesAnimations {
+            // نفس حركة SwiftUI بالضبط (spring التكبير أو رجوع البطاقة)
+            context.animate(changes: apply)
+        } else {
+            apply()
+        }
     }
 }
 

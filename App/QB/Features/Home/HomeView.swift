@@ -86,7 +86,7 @@ struct HomeView: View {
     @State private var scrolledPastHero = false
 
     /// آخر بانر محفوظ: يطلع أول ما يفتح التطبيق لين توصل الرفوف
-    @State private var cachedHero: MetaPreview? = HeroCache.atLaunch
+    @State private var cachedHero: MetaPreview? = HeroCache.latest ?? HeroCache.atLaunch
 
     /// أول عمل له خلفية عريضة من أول رف (أو المحفوظ لين توصل)
     private var heroItem: MetaPreview? {
@@ -110,6 +110,7 @@ struct HomeView: View {
             // نحفظ البانر وصورته للمرة الجاية (بالخلفية، ما نأخر الرفوف)
             if let first = fresh.first, let hero = first.items.first(where: { $0.background != nil }) ?? first.items.first {
                 HeroCache.save(hero)
+                HeroCache.latest = hero
             }
             withAnimation(Motion.standard) { rows = fresh }
             loadedVersion = app.addonsVersion

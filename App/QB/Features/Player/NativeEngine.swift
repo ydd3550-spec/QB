@@ -158,6 +158,13 @@ final class NativeEngine: NSObject, PlaybackEngine {
                 // Only if it really got detached; a layer that is just warming up is left alone (the watchdog covers it)
                 if self.view.playerLayer.player !== self.player { self.reattachLayer() }
                 self.refreshLayout()
+                // رجعنا والصورة مو مرسومة (iOS يفصل رسم الفيديو بالخلفية): بحث دقيق لنفس الثانية يرسم
+                // الإطار الحالي فورًا بدل شاشة سودا، بدون ما يتغير مكانك ولا يشتغل لحاله
+                if !self.view.playerLayer.isReadyForDisplay || self.player.timeControlStatus == .paused,
+                   self.player.currentItem?.status == .readyToPlay {
+                    let now = self.player.currentTime()
+                    self.player.seek(to: now, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
             }
         }
     }

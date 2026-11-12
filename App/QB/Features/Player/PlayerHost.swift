@@ -14,10 +14,14 @@ struct PlayerHost: View {
     @State private var dragOffset: CGFloat = 0
     /// البطاقة تلحق إصبعك يمين ويسار بعد (مثل صفحة التفاصيل)
     @State private var dragX: CGFloat = 0
+    /// عرض الشريط فوق (عشان نعرف هل العنوان يلحق مكان جنب الأزرار)
+    @State private var topBarWidth: CGFloat = 0
     /// السحب لتحت خلص وقاعد نطلع: نوقف أي إيماءة ثانية لين تختفي الشاشة
     @State private var leaving = false
     /// البطاقة تختفي وهي نازلة (قبل لفّة الشاشة للطول)
     @State private var dismissFade = false
+    /// طبقة الفيديو نفسها مخفية (بعد ما تختفي البطاقة وقبل ما تلف الشاشة للطول)
+    @State private var surfaceHidden = false
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
@@ -36,7 +40,7 @@ struct PlayerHost: View {
     @State private var rippleTask: Task<Void, Never>?
     @State private var sheet: PlayerSheet?
     /// القرص بالإصبعين: مقداره الحي، ويرجع 1 بسبرنق لما تشيل أصابعك أو ينلغي
-    @GestureState(resetTransaction: Transaction(animation: .spring(response: 0.32, dampingFraction: 0.82)))
+    @GestureState(resetTransaction: Transaction(animation: PlayerZoom.spring))
     private var pinchMagnification: CGFloat = 1
     @GestureState private var pinching = false
     /// القرص بدأ وسط سحب: السحب ينلغي (لا تقديم ولا صوت ولا خروج)
@@ -55,23 +59,27 @@ struct PlayerHost: View {
     var body: some View {
         GeometryReader { geo in
             let screen = fullScreenSize(geo)
-            let dismiss = DismissCard(offset: dragOffset, x: dragX, screen: screen)
+            // يمين ويسار ما يتحرك إلا والبطاقة نازلة فعلًا بسحب لتحت. غير كذا مقفول على الصفر،
+            // فما يقدر أي سحب ينلغي (مثل التنقّل بين التطبيقات من شريط الشاشة) يخلّي المشغّل مزحوح
+            let dismiss = DismissCard(offset: dragOffset, x: dragOffset > 0 ? dragX : 0, screen: screen)
+            let cardAnchor = DismissCard.anchor(size: geo.size, insets: geo.safeAreaInsets, screen: screen)
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                let pinchScale = PlayerLogic.pinchPreviewScale(pinchMagnification)
-                EngineSurface(surface: player.surface)
+                // التكبير مثل يوتيوب: الصورة تكبر مع أصابعك 1:1، ولما تشيلها تستقر بسبرنق على "الحجم الأصلي"
+                // أو "ملء الشاشة". تحويل رسم بس داخل منظر الفيديو (نفس النسبة بالطول والعرض، من النص، ومقصوص
+                // على الشاشة وعلى زوايا البطاقة)، فمقاس المشغّل ما يتغيّر وما ينعاد بناء الصورة بأي مشغّل
+                let fillScale = PlayerZoom.fillScale(screen: screen, video: player.videoSize)
+                let zoom = PlayerZoom.live(base: player.videoFill ? fillScale : 1, magnification: pinchMagnification, fill: fillScale)
+                EngineSurface(surface: player.surface, zoom: zoom, cornerRadius: dismiss.cornerRadius, hidden: surfaceHidden)
                     .ignoresSafeArea()
-                    // معاينة خفيفة وقت القرص، وترجع لمكانها أول ما تشيل أصابعك.
-                    // تكبير رسم بس: مقاس الفيديو نفسه ما يتغيّر أبدًا، فـ VLC ما يعيد بناء الصورة
-                    .visualEffect { content, _ in content.scaleEffect(pinchScale) }
                     .opacity(player.surface == nil ? 0 : 1)
 
                 HiddenVolumeView(levels: levels)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
 
-                gestureLayer(size: geo.size)
+                gestureLayer(size: geo.size, screen: screen)
 
                 // الترجمة تلحق الصورة نفسها: بالطول تحت الفيديو اللي بالنص، وبالعرض أو بعد التكبير فوق حافة الشاشة
                 let subs = PlayerLogic.subtitlePlacement(
@@ -99,7 +107,7 @@ struct PlayerHost: View {
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .glassEffect(Glass.player, in: .capsule)
                         .frame(maxHeight: .infinity, alignment: .top)
-                        .padding(.top, 70)
+                        .padding(.top, 70 + topBarExtra)
                         .allowsHitTesting(false)
                         .transition(.opacity)
                 }
@@ -143,7 +151,9 @@ struct PlayerHost: View {
             }
             .visualEffect { content, _ in
                 content
-                    .scaleEffect(dismiss.scale, anchor: .center)
+                    // من نص الشاشة الحقيقي (مو نص المنطقة الآمنة): بالعرض الحواف الآمنة مو متساوية فوق وتحت،
+                    // ومن نصها كانت البطاقة تصغر مزحوحة عن مكانها
+                    .scaleEffect(dismiss.scale, anchor: cardAnchor)
                     .offset(x: dismiss.x, y: dismiss.offset)
             }
             // الإزاحة يمين ويسار بإحداثيات الشاشة نفسها (نفس اتجاه إصبعك بالعربي والإنجليزي)
@@ -171,6 +181,7 @@ struct PlayerHost: View {
             player.dismissProgress = 0
         }
         .onChange(of: scenePhase) { _, phase in
+            resetInteractiveState()
             switch phase {
             case .active:
                 levels.reapplyBrightness()
@@ -199,7 +210,8 @@ struct PlayerHost: View {
                 if !pinching { dragVoided = false }
                 if seekPreview != nil { seekPreview = nil }
                 if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-                if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
+                if dragOffset != 0 || dragX != 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
+                if !leaving { OrientationLock.releaseHold() }
                 dragAxis = nil
             }
         }
@@ -228,7 +240,7 @@ struct PlayerHost: View {
 
     // MARK: - الإيماءات
 
-    private func gestureLayer(size: CGSize) -> some View {
+    private func gestureLayer(size: CGSize, screen: CGSize) -> some View {
         Color.clear
             .contentShape(Rectangle())
             .ignoresSafeArea()
@@ -249,6 +261,11 @@ struct PlayerHost: View {
                     .onChanged { v in
                         // إصبعين يقرصون: هذا تكبير مو سحب
                         guard !pinching, !dragVoided else { return }
+                        // يبدأ من شريط الشاشة تحت: هذا سحب النظام (الرئيسية والتنقّل بين التطبيقات)، مو لنا
+                        if dragAxis == nil, v.startLocation.y > screen.height - Self.homeIndicatorZone {
+                            dragVoided = true
+                            return
+                        }
                         if dragAxis == nil {
                             dragAxis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
                             seekStart = player.elapsed
@@ -257,7 +274,9 @@ struct PlayerHost: View {
                                 switch verticalKind {
                                 case .volume: levels.begin(.volume)
                                 case .brightness: levels.begin(.brightness)
-                                case .dismiss: break
+                                case .dismiss:
+                                    // وقت السحب لتحت الشاشة ما تلف (لو مال الجوال)، عشان البطاقة ما تطلع بالعرض فوق صفحة بالطول
+                                    OrientationLock.holdCurrent()
                                 }
                             }
                         }
@@ -267,9 +286,11 @@ struct PlayerHost: View {
                             seekPreview = SeekMath.target(start: seekStart, dx: v.translation.width, width: size.width, duration: player.duration)
                         case .vertical:
                             if verticalKind == .dismiss {
-                                dragOffset = max(0, v.translation.height)
-                                // يمين ويسار: يلحق الإصبع، أخف شوي من فوق وتحت
-                                dragX = v.translation.width * 0.85
+                                let down = max(0, v.translation.height)
+                                dragOffset = down
+                                // يمين ويسار: يلحق الإصبع، أخف شوي من فوق وتحت. ما يبدأ إلا مع النزول لتحت
+                                // (يدخل بالتدريج أول 24 نقطة عشان ما ينط)، وسحب لفوق أو على الجنب بس يبقى صفر
+                                dragX = down > 0 ? v.translation.width * 0.85 * min(down / 24, 1) : 0
                             } else {
                                 levels.change(dy: v.translation.height, height: size.height)
                             }
@@ -308,11 +329,14 @@ struct PlayerHost: View {
                                 withAnimation(.easeIn(duration: landscape ? 0.2 : 0.28)) { dismissFade = true }
                                 Task {
                                     try? await Task.sleep(for: .milliseconds(landscape ? 220 : 300))
+                                    // قبل لفّة الشاشة للطول: نخفي طبقة الفيديو نفسها، فما تطلع بطاقة بالعرض فوق صفحة بالطول
+                                    surfaceHidden = true
                                     player.minimize(animated: false)
                                 }
                             } else {
                                 // يرجع بنطّة خفيفة، ولو لمستها وهي راجعة تمسكها من مكانها
                                 withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 }
+                                OrientationLock.releaseHold()
                             }
                         }
                     }
@@ -324,13 +348,17 @@ struct PlayerHost: View {
                     .updating($pinching) { _, state, _ in state = true }
                     .onEnded { v in
                         guard !leaving, player.errorMessage == nil else { return }
-                        switch PlayerLogic.pinchZoomDecision(magnification: v.magnification, filled: player.videoFill) {
-                        case .some(let fill): setZoom(fill)
-                        case .none: break
-                        }
+                        let fillScale = PlayerZoom.fillScale(screen: screen, video: player.videoSize)
+                        // الفيديو أصلًا بنفس نسبة الشاشة: ما فيه شي يتكبّر
+                        guard PlayerZoom.canZoom(fillScale) else { return }
+                        let target = PlayerZoom.decide(magnification: v.magnification, filled: player.videoFill, fill: fillScale)
+                        setZoom(target)
                     }
             )
     }
+
+    /// منطقة شريط الرئيسية تحت: أي سحب يبدأ فيها نخليه للنظام
+    static let homeIndicatorZone: CGFloat = 30
 
     /// مقاس الشاشة كامل مع الحواف الآمنة (الفيديو يغطيها كلها)
     private func fullScreenSize(_ geo: GeometryProxy) -> CGSize {
@@ -343,18 +371,38 @@ struct PlayerHost: View {
         dragVoided = true
         if seekPreview != nil { seekPreview = nil }
         if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-        if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
+        if dragOffset != 0 || dragX != 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
         dragAxis = nil
     }
 
+    /// التطبيق راح للخلفية أو رجع أو انفتح مركز التحكم: أي سحب كان شغّال انلغى من النظام،
+    /// فنرجّع البطاقة لمكانها كامل فورًا (بدون حركة) ونمسح كل شي بدأه السحب
+    private func resetInteractiveState() {
+        guard !leaving else { return }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            dragOffset = 0
+            dragX = 0
+        }
+        if seekPreview != nil { seekPreview = nil }
+        if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
+        dragAxis = nil
+        dragVoided = pinching
+        OrientationLock.releaseHold()
+    }
+
     private func setZoom(_ fill: Bool) {
-        player.setVideoFill(fill)
+        let changed = fill != player.videoFill
+        // نفس السبرنق اللي يرجّع القرص، فالصورة تكمّل من مكان أصابعك لمكانها الأخير بدون نطّة
+        withAnimation(PlayerZoom.spring) { player.setVideoFill(fill) }
+        guard changed else { return }
         Haptics.tap()
         zoomPillTick += 1
         let token = zoomPillTick
         withAnimation(Motion.pop) { zoomPill = fill }
         Task {
-            try? await Task.sleep(for: .milliseconds(1400))
+            try? await Task.sleep(for: .milliseconds(1000))
             guard zoomPillTick == token else { return }
             withAnimation(.easeOut(duration: 0.35)) { zoomPill = nil }
         }
@@ -425,32 +473,77 @@ struct PlayerHost: View {
         }
     }
 
+    /// الشريط فوق: 6 أزرار. لو ما بقى للعنوان مكان يكفي (بالطول غالبًا) ينزل تحت الأزرار بدل ما ينقص لحرفين،
+    /// والأزرار نفسها تبقى بنفس مكانها وترتيبها
+    private var titleFitsInRow: Bool {
+        guard topBarWidth > 0 else { return true }
+        let buttons: CGFloat = 6
+        return topBarWidth - buttons * 42 - buttons * 12 - 8 >= 110
+    }
+
+    /// العنوان نزل تحت الأزرار: اللي تحت الشريط ينزل معه عشان ما يغطيه
+    private var topBarExtra: CGFloat { titleFitsInRow ? 0 : 44 }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(player.context?.title ?? "").font(Typo.headline).lineLimit(1)
+            if let sub = player.context?.subtitle {
+                Text(sub).font(Typo.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .foregroundStyle(.white)
+    }
+
     private var topBar: some View {
-        HStack(spacing: 12) {
-            GlassCircleButton(systemImage: "chevron.down", size: 42, label: L("تصغير"), clear: true) { player.minimize() }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.context?.title ?? "").font(Typo.headline).lineLimit(1)
-                if let sub = player.context?.subtitle {
-                    Text(sub).font(Typo.caption).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                GlassCircleButton(systemImage: "chevron.down", size: 42, label: L("تصغير"), clear: true) { player.minimize() }
+                if titleFitsInRow { titleBlock }
+                Spacer(minLength: 8)
+                reloadButton
+                // AirPlay يشتغل مع المشغّلين: مع المشغّل الأصلي يروح الفيديو والصوت للتلفزيون،
+                // ومع VLC يروح الصوت للجهاز اللي تختاره (سماعة أو تلفزيون) والصورة تبقى بالجوال
+                AirPlayButton()
+                    .frame(width: 42, height: 42)
+                    .glassEffect(Glass.player.interactive(), in: .circle)
+                    .accessibilityLabel(L("AirPlay"))
+                GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة"), clear: true) {
+                    touch { if player.supportsPiP { player.startPiP() } }
+                }
+                .disabled(!player.settledSupportsPiP)
+                .opacity(player.settledSupportsPiP ? 1 : 0.35)
+                GlassCircleButton(systemImage: "rotate.right", size: 42, label: L("تدوير الشاشة"), clear: true) { touch { player.toggleOrientation() } }
+                GlassCircleButton(systemImage: "xmark", size: 42, label: L("إغلاق"), clear: true) { player.close() }
+            }
+            if !titleFitsInRow {
+                titleBlock.padding(.horizontal, 4)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { topBarWidth = $0 }
+    }
+
+    /// يعيد تحميل نفس المصدر من نفس الثانية بدون ما يسكّر المشغّل (نفس الصوت والترجمة والسرعة)
+    private var reloadButton: some View {
+        Button {
+            Haptics.tap()
+            touch { player.reloadInPlace() }
+        } label: {
+            ZStack {
+                if player.isReloading {
+                    ProgressView().controlSize(.small).tint(.white)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 42 * 0.4, weight: .semibold))
                 }
             }
             .foregroundStyle(.white)
-            Spacer(minLength: 8)
-            // Always in place (no jumping while loading switches engines); dimmed when the settled engine can't do it
-            AirPlayButton()
-                .frame(width: 42, height: 42)
-                .glassEffect(Glass.player.interactive(), in: .circle)
-                .accessibilityLabel(L("AirPlay"))
-                .disabled(!player.settledSupportsAirPlay)
-                .opacity(player.settledSupportsAirPlay ? 1 : 0.35)
-            GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة"), clear: true) {
-                touch { if player.supportsPiP { player.startPiP() } }
-            }
-            .disabled(!player.settledSupportsPiP)
-            .opacity(player.settledSupportsPiP ? 1 : 0.35)
-            GlassCircleButton(systemImage: "rotate.right", size: 42, label: L("تدوير الشاشة"), clear: true) { touch { player.toggleOrientation() } }
-            GlassCircleButton(systemImage: "xmark", size: 42, label: L("إغلاق"), clear: true) { player.close() }
+            .frame(width: 42, height: 42)
+            .contentShape(Circle())
         }
+        .buttonStyle(.plain)
+        .glassEffect(Glass.player.interactive(), in: .circle)
+        .disabled(player.isReloading || player.source == nil)
+        .accessibilityLabel(L("إعادة تحميل"))
     }
 
     /// بالنص زر التشغيل/الإيقاف بس. التقديم والرجوع بضغطتين على طرف الشاشة مثل يوتيوب
@@ -471,7 +564,7 @@ struct PlayerHost: View {
             ZStack {
                 // مؤشر التحميل الوحيد بالشاشة يكون هنا داخل الزر
                 if showsSpinner && optimisticPlaying == nil {
-                    ProgressView().controlSize(.small).tint(.white)
+                    ProgressView().controlSize(.regular).tint(.white)
                 } else {
                     Image(systemName: shownPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: PlayerLogic.Transport.play * 0.4, weight: .bold))
@@ -669,7 +762,7 @@ struct PlayerHost: View {
             .padding(.horizontal, 14).frame(height: 36)
             .glassEffect(Glass.player.interactive(), in: .capsule)
             .frame(maxHeight: .infinity, alignment: .top)
-            .padding(.top, controlsVisible ? 70 : 24)
+            .padding(.top, controlsVisible ? 70 + topBarExtra : 24)
             .transition(.asymmetric(insertion: .scale(scale: 0.86).combined(with: .opacity), removal: .opacity))
             .task(id: from) {
                 try? await Task.sleep(for: .seconds(6))
@@ -686,14 +779,16 @@ struct PlayerHost: View {
             HStack(spacing: 7) {
                 Image(systemName: fill ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
                     .font(.system(size: 12, weight: .semibold))
-                Text(fill ? L("تكبير لملء الشاشة") : L("الحجم الأصلي"))
+                Text(fill ? L("مكبّر لملء الشاشة") : L("الحجم الأصلي"))
                     .font(Typo.caption)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14).frame(height: 34)
+            .background(.black.opacity(0.25), in: .capsule)
             .glassEffect(Glass.player, in: .capsule)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .padding(.top, (controlsVisible ? 70 : 24) + (resumeShown ? 44 : 0))
+            // بالنص مثل يوتيوب، وفوق زر التشغيل لو الأزرار ظاهرة عشان ما تغطيه
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .offset(y: controlsVisible || resumeShown ? -(PlayerLogic.Transport.play / 2 + 34) : 0)
             .allowsHitTesting(false)
             .transition(.asymmetric(insertion: .scale(scale: 0.86).combined(with: .opacity), removal: .opacity))
             .id(fill)
@@ -744,8 +839,10 @@ struct PlayerHost: View {
             .padding(24)
         } else if (player.state == .loading || (player.isBuffering && player.elapsed < 1)) && !controlsVisible {
             // مؤشر واحد بس: داخل زر التشغيل لما الأدوات ظاهرة، وبنفس مكانه لما تختفي. ولا شي ثاني فوق الصورة
-            ProgressView().controlSize(.small).tint(.white)
+            // على صورة سودا الزجاج الشفاف ما يبان، فتحته دائرة غامقة وفوقها المؤشر بحجمه العادي
+            ProgressView().controlSize(.regular).tint(.white)
                 .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
+                .background(.black.opacity(0.35), in: .circle)
                 .glassEffect(Glass.player, in: .circle)
                 .transition(.opacity)
                 .allowsHitTesting(false)
@@ -976,6 +1073,41 @@ struct AirPlayButton: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 
+/// التكبير بالقرص مثل يوتيوب: حالتين بس (الحجم الأصلي وملء الشاشة) وبينهم يلحق أصابعك
+enum PlayerZoom {
+    /// نفس السبرنق للاستقرار ولرجوع القرص، فما فيه نطّة بين الاثنين
+    static let spring = Animation.spring(response: 0.34, dampingFraction: 0.86)
+
+    /// كم لازم نكبّر الفيديو (وهو بالحجم الأصلي داخل الشاشة) عشان يملّي الشاشة كلها بدون أطراف سودا
+    static func fillScale(screen: CGSize, video: CGSize) -> CGFloat {
+        guard screen.width > 1, screen.height > 1, video.width > 1, video.height > 1 else { return 1 }
+        let fit = min(screen.width / video.width, screen.height / video.height)
+        let shown = CGSize(width: video.width * fit, height: video.height * fit)
+        return max(1, max(screen.width / shown.width, screen.height / shown.height))
+    }
+
+    /// نسبة الفيديو قريبة من نسبة الشاشة (فرق أقل من 2%): ما فيه شي يتكبّر
+    static func canZoom(_ fill: CGFloat) -> Bool { fill > 1.02 }
+
+    /// المقدار وقت القرص: 1:1 مع الأصابع بين الحالتين، وبعدها مطاطي خفيف (ربع الزيادة) بدل ما يوقف فجأة
+    static func live(base: CGFloat, magnification: CGFloat, fill: CGFloat) -> CGFloat {
+        guard canZoom(fill) || magnification != 1 else { return 1 }
+        let raw = base * magnification
+        let hi = max(fill, 1)
+        if raw > hi { return hi + (raw - hi) * 0.25 }
+        if raw < 1 { return 1 - (1 - raw) * 0.25 }
+        return raw
+    }
+
+    /// لما تشيل أصابعك: اتجاه القرص واضح؟ نروح له. غير كذا الأقرب للمقدار اللي وصلت له
+    static func decide(magnification: CGFloat, filled: Bool, fill: CGFloat) -> Bool {
+        if magnification > 1.04 { return true }
+        if magnification < 0.96 { return false }
+        let now = (filled ? fill : 1) * magnification
+        return abs(now - fill) < abs(now - 1)
+    }
+}
+
 /// شكل بطاقة المشغّل وقت السحب لتحت (مثل تطبيق Apple TV والصور):
 /// تلحق الإصبع 1:1، تصغر شوي، وزواياها تتدوّر لين توصل لزوايا الشاشة
 struct DismissCard {
@@ -1006,6 +1138,13 @@ struct DismissCard {
 
     /// مسافة كافية تطلّع البطاقة من الشاشة حتى لو لفّت الشاشة بعدها
     static func offscreen(_ size: CGSize) -> CGFloat { max(size.width, size.height) + 160 }
+
+    /// نص الشاشة كاملة بإحداثيات المحتوى (اللي يبدأ من الحافة الآمنة)
+    static func anchor(size: CGSize, insets: EdgeInsets, screen: CGSize) -> UnitPoint {
+        guard size.width > 1, size.height > 1 else { return .center }
+        return UnitPoint(x: (screen.width / 2 - insets.leading) / size.width,
+                         y: (screen.height / 2 - insets.top) / size.height)
+    }
 
     /// رجوع بنطّة خفيفة (نفس إحساس الأزرار في التطبيق)
     static let springBack = Animation.spring(response: 0.36, dampingFraction: 0.74)

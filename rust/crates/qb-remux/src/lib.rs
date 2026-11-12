@@ -920,6 +920,23 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 
 static SERVER: OnceCell<Arc<Server>> = OnceCell::const_new();
 
+/// Re-open the local listener on the port the sessions' URLs already use.
+async fn rebind(port: u16) -> Option<TcpListener> {
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+    for _ in 0..40 {
+        if let Ok(sock) = tokio::net::TcpSocket::new_v4() {
+            let _ = sock.set_reuseaddr(true);
+            if sock.bind(addr).is_ok() {
+                if let Ok(l) = sock.listen(64) {
+                    return Some(l);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    None
+}
+
 async fn server() -> Result<Arc<Server>, RemuxError> {
     SERVER
         .get_or_try_init(|| async {
@@ -928,15 +945,31 @@ async fn server() -> Result<Arc<Server>, RemuxError> {
             let srv = Arc::new(Server { port, sessions: Mutex::new(vec![]), next: Mutex::new(1) });
             let s2 = srv.clone();
             tokio::spawn(async move {
+                let mut listener = listener;
+                let mut failures: u32 = 0;
                 loop {
-                    let Ok((sock, _)) = listener.accept().await else {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                        continue;
-                    };
-                    let srv = s2.clone();
-                    tokio::spawn(async move {
-                        let _ = serve(sock, srv).await;
-                    });
+                    match listener.accept().await {
+                        Ok((sock, _)) => {
+                            failures = 0;
+                            let srv = s2.clone();
+                            tokio::spawn(async move {
+                                let _ = serve(sock, srv).await;
+                            });
+                        }
+                        Err(_) => {
+                            failures += 1;
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            // iOS kills ("defuncts") listening sockets while the app is suspended in the
+                            // background, and accept() then fails forever. Rebind on the SAME port so every
+                            // playlist/segment URL the player already holds keeps working after the app returns.
+                            if failures >= 3 {
+                                if let Some(fresh) = rebind(port).await {
+                                    listener = fresh;
+                                    failures = 0;
+                                }
+                            }
+                        }
+                    }
                 }
             });
             Ok(srv)

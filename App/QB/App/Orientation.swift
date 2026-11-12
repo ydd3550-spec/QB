@@ -15,14 +15,46 @@ enum OrientationLock {
 
     /// بعد ما تختفي شاشة المشغّل
     static func lockPortrait() {
+        holding = false
         mask = .portrait
         refresh()
         if isLandscapeNow { request(.portrait) }
     }
 
+    private static var holding = false
+
+    /// وقت السحب لتحت: نثبّت الاتجاه الحالي عشان ميلان الجوال ما يلف الشاشة والبطاقة بين يديك
+    static func holdCurrent() {
+        guard !holding, mask == .allButUpsideDown, let o = scene?.effectiveGeometry.interfaceOrientation else { return }
+        let m: UIInterfaceOrientationMask
+        switch o {
+        case .landscapeLeft: m = .landscapeLeft
+        case .landscapeRight: m = .landscapeRight
+        case .portrait: m = .portrait
+        default: return
+        }
+        holding = true
+        mask = m
+        refresh()
+    }
+
+    /// السحب رجع أو انلغى: الدوران يرجع مسموح مثل قبل
+    static func releaseHold() {
+        guard holding else { return }
+        holding = false
+        let held = mask
+        mask = .allButUpsideDown
+        // نطلب نفس الاتجاه اللي هي فيه، فما تلف الشاشة لحالها لحظة ما يرجع الدوران مسموح
+        request(held)
+    }
+
     /// قبل إغلاق المشغّل: يرجّع عمودي. يرجّع true لو كانت أفقي ويبي وقت يدور
     @discardableResult
     static func restorePortrait() -> Bool {
+        if holding {
+            holding = false
+            mask = .allButUpsideDown
+        }
         let wasLandscape = isLandscapeNow
         if wasLandscape { request(.portrait) }
         return wasLandscape
