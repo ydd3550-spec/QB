@@ -51,6 +51,7 @@ struct LibraryView: View {
             }
             .qbScreenBackground()
             .navigationTitle(L("مكتبتي"))
+            .qbNavBar()
             .mediaDestinations(zoom)
             .task(id: app.libraryVersion) { reload() }
             .refreshable { reload() }

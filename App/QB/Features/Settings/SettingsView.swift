@@ -81,10 +81,18 @@ struct SettingsView: View {
                         row(L("لغة الترجمة"), "captions.bubble.fill")
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        row(L("حجم الترجمة"), "textformat.size", detail: "\(Int(app.subtitleSize * 100))%")
-                        Slider(value: Binding(get: { app.subtitleSize }, set: { app.subtitleSize = $0 }), in: 0.7...1.8, step: 0.1) { editing in
+                        row(L("حجم الترجمة"), "textformat.size", detail: "\(Int((app.subtitleSize * 100).rounded()))%")
+                        // صغير يسار وكبير يمين دايمًا (مثل أبل)، عشان مكان المؤشر يطابق الرقم
+                        Slider(value: Binding(get: { app.subtitleSize }, set: { app.subtitleSize = ($0 * 10).rounded() / 10 }), in: 0.7...1.8, step: 0.1) {
+                            Text(L("حجم الترجمة"))
+                        } minimumValueLabel: {
+                            Image(systemName: "textformat.size.smaller").font(.caption).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Image(systemName: "textformat.size.larger").font(.body).foregroundStyle(.secondary)
+                        } onEditingChanged: { editing in
                             if !editing { app.save("subtitle_size", String(format: "%.1f", app.subtitleSize)) }
                         }
+                        .environment(\.layoutDirection, .leftToRight)
                         Text(L("هذا شكل الترجمة"))
                             .font(Typo.font(.semibold, 19 * app.subtitleSize, .title3))
                             .foregroundStyle(.white)
@@ -149,6 +157,7 @@ struct SettingsView: View {
             .font(Typo.row)
             .qbScreenBackground()
             .navigationTitle(L("الإعدادات"))
+            .qbNavBar()
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
                 case .addons: AddonsView()
@@ -325,11 +334,28 @@ struct HistoryView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.locale) private var locale
     @State private var entries: [HistoryEntry] = []
+    @State private var episodes: [String: String] = [:]
     @State private var confirm = false
+
+    /// كل عمل مرة وحدة بآخر وقت شفته فيه، والمسلسل معه آخر حلقة
+    private func load() {
+        let all = (try? app.core?.history(limit: 300)) ?? []
+        var seen = Set<String>()
+        let unique = all.sorted { $0.watchedAt > $1.watchedAt }.filter { seen.insert($0.mediaId).inserted }
+        var eps: [String: String] = [:]
+        for h in unique where h.kind == .series {
+            if let p = (try? app.core?.progress(mediaId: h.mediaId)) ?? nil,
+               let id = p.episodeId, let (s, e) = WidgetBridge.seasonEpisode(id) {
+                eps[h.mediaId] = L("م%@ ح%@", "\(s)", "\(e)")
+            }
+        }
+        entries = unique
+        episodes = eps
+    }
 
     var body: some View {
         List {
-            ForEach(Array(entries.enumerated()), id: \.offset) { _, h in
+            ForEach(entries, id: \.mediaId) { h in
                 NavigationLink(value: MediaRef(id: h.mediaId, kind: h.kind, name: h.title, poster: h.poster)) {
                     HStack(spacing: 12) {
                         RemoteImage(url: h.poster, maxPixel: 160)
@@ -337,8 +363,13 @@ struct HistoryView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(h.title).font(Typo.bodyMedium).lineLimit(1)
-                            Text(Date(timeIntervalSince1970: TimeInterval(h.watchedAt)).formatted(.relative(presentation: .named).locale(locale)))
-                                .font(Typo.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                if let ep = episodes[h.mediaId] {
+                                    Text(ep).font(Typo.badge).foregroundStyle(Palette.accent)
+                                }
+                                Text(Date(timeIntervalSince1970: TimeInterval(h.watchedAt)).formatted(.relative(presentation: .named).locale(locale)))
+                                    .font(Typo.caption).foregroundStyle(.secondary)
+                            }
                         }
                         Spacer()
                         TagBadge(text: h.engine == .vlc ? "VLC" : L("أصلي"))
@@ -349,6 +380,7 @@ struct HistoryView: View {
         .scrollContentBackground(.hidden)
         .qbScreenBackground()
         .navigationTitle(L("سجل المشاهدة"))
+        .qbNavBar()
         .overlay {
             if entries.isEmpty {
                 EmptyStateView(title: L("السجل فاضي"), systemImage: "clock")
@@ -366,6 +398,6 @@ struct HistoryView: View {
                 app.libraryVersion += 1
             }
         }
-        .task(id: app.libraryVersion) { entries = (try? app.core?.history(limit: 300)) ?? [] }
+        .task(id: app.libraryVersion) { load() }
     }
 }

@@ -8,19 +8,19 @@ struct RootView: View {
         @Bindable var player = model.player
         TabView(selection: Binding(get: { model.tab }, set: { model.select($0) })) {
             Tab(L("الرئيسية"), systemImage: "house.fill", value: AppTab.home) {
-                HomeView()
+                HomeView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("اكتشف"), systemImage: "square.grid.2x2.fill", value: AppTab.discover) {
-                DiscoverView()
+                DiscoverView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("مكتبتي"), systemImage: "books.vertical.fill", value: AppTab.library) {
-                LibraryView()
+                LibraryView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("الإعدادات"), systemImage: "gearshape.fill", value: AppTab.settings) {
-                SettingsView()
+                SettingsView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("البحث"), systemImage: "magnifyingglass", value: AppTab.search, role: .search) {
-                SearchView()
+                SearchView().miniPlayerInset(model.player.showsMini)
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
@@ -112,5 +112,13 @@ private struct MiniPlayerAccessory: ViewModifier {
         } else {
             content.tabViewBottomAccessory { MiniPlayerView() }
         }
+    }
+}
+
+
+extension View {
+    /// مسافة تحت آخر المحتوى بقد المشغّل الصغير، عشان آخر سطر ينسحب فوقه وما يتغطّى
+    func miniPlayerInset(_ visible: Bool) -> some View {
+        safeAreaPadding(.bottom, visible ? 64 : 0)
     }
 }

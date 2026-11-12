@@ -49,6 +49,11 @@ struct HomeView: View {
                 }
                 .ignoresSafeArea(edges: (heroItem == nil && !loading && app.ready) ? [] : .top)
                 .trackOverscroll($pull)
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y + geo.contentInsets.top > 420
+                } action: { _, past in
+                    withAnimation(.smooth(duration: 0.25)) { scrolledPastHero = past }
+                }
                 .animation(.smooth(duration: 0.45), value: heroItem?.id)
                 .scrollIndicators(.hidden)
                 .onChange(of: app.scrollToTop[.home]) { _, _ in
@@ -63,11 +68,16 @@ struct HomeView: View {
                 .sharedBackgroundVisibility(.hidden)
             }
             .navigationBarTitleDisplayMode(.inline)
+            // بعد البانر: شريط زجاجي تحت شريط الحالة والشعار عليه، عشان ما يطوف فوق البوسترات
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackgroundVisibility(scrolledPastHero ? .visible : .hidden, for: .navigationBar)
             .mediaDestinations(zoom)
             .task(id: app.addonsVersion) { await load(force: false) }
             .refreshable { await load(force: true) }
         }
     }
+
+    @State private var scrolledPastHero = false
 
     /// السحب لتحت فوق البانر: الصورة تتمطّط وتعبّي الفراغ
     @State private var pull: CGFloat = 0

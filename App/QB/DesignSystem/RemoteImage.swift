@@ -80,6 +80,8 @@ struct RemoteImage: View {
     var maxPixel: CGFloat = 420
     var contentMode: ContentMode = .fill
     var placeholderSymbol: String? = "film"
+    /// لو ما انفتحت الصورة: حرف بالذهبي بدل الرمز (شعارات الإضافات)
+    var placeholderText: String? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
@@ -94,7 +96,11 @@ struct RemoteImage: View {
             } else {
                 // الشعارات (بدون رمز بديل) خلفيتها شفافة
                 (placeholderSymbol == nil ? Color.clear : Palette.surface)
-                if failed, let placeholderSymbol {
+                if failed, let placeholderText {
+                    Text(placeholderText)
+                        .font(Typo.font(.bold, 20, .title3))
+                        .foregroundStyle(Palette.accent)
+                } else if failed, let placeholderSymbol {
                     Image(systemName: placeholderSymbol)
                         .font(.system(size: 22, weight: .light))
                         .foregroundStyle(.tertiary)

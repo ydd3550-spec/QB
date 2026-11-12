@@ -52,6 +52,8 @@ final class NativeEngine: NSObject, PlaybackEngine {
     private var legibleGroup: AVMediaSelectionGroup?
     private var startAt: Double = 0
     private var didInitialSeek = false
+    /// وقت التقديم لمكان الاستكمال: المراقب ينتظر لين يخلص (التقديم بملف كبير على النت يطول)
+    private var seekingToStart = false
 
     override init() {
         super.init()
@@ -105,7 +107,11 @@ final class NativeEngine: NSObject, PlaybackEngine {
         guard let item, !failed else { return }
         switch item.status {
         case .failed:
-            fail(item.error?.localizedDescription ?? "failed")
+            let e = item.error as NSError?
+            let log = item.errorLog()?.events.last
+            var reason = e.map { "\($0.localizedDescription) [\($0.domain) \($0.code)]" } ?? "failed"
+            if let log, log.errorStatusCode != 0 { reason += " · log \(log.errorStatusCode) \(log.errorComment ?? "")" }
+            fail(reason)
             return
         case .readyToPlay:
             if readyAt == nil {
@@ -113,7 +119,19 @@ final class NativeEngine: NSObject, PlaybackEngine {
                 lastProgressAt = Date()
                 if startAt > 1, !didInitialSeek {
                     didInitialSeek = true
-                    player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600))
+                    seekingToStart = true
+                    player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600),
+                                toleranceBefore: CMTime(seconds: 1, preferredTimescale: 600),
+                                toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600)) { [weak self] _ in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            // نبدأ عد المراقب من بعد ما يوصل لمكان الاستكمال
+                            self.seekingToStart = false
+                            self.readyAt = Date()
+                            self.lastProgressAt = Date()
+                            if self.wantsPlay { self.player.playImmediately(atRate: self.rate) }
+                        }
+                    }
                 }
                 loadTracks()
             }
@@ -160,10 +178,12 @@ final class NativeEngine: NSObject, PlaybackEngine {
 
     /// بعد readyToPlay نراقب 6 ثواني أول مرة، وبعدها أي علق طويل قبل أول تشغيل
     private func watchdog(_ item: AVPlayerItem) {
-        guard let readyAt, wantsPlay else { return }
+        guard let readyAt, wantsPlay, !seekingToStart else { return }
         let sinceReady = Date().timeIntervalSince(readyAt)
-        if sinceReady >= 6, !everPlayed {
-            let stuck = player.timeControlStatus == .waitingToPlayAtSpecifiedRate && Date().timeIntervalSince(lastProgressAt) >= 6
+        // الاستكمال من نص الملف يحتاج وقت أطول يعبّي فيه
+        let grace: Double = startAt > 1 ? 12 : 6
+        if sinceReady >= grace, !everPlayed {
+            let stuck = player.timeControlStatus == .waitingToPlayAtSpecifiedRate && Date().timeIntervalSince(lastProgressAt) >= grace
             let noPicture = item.presentationSize == .zero && hasVideoTrackUnknown(item)
             if stuck || noPicture {
                 fail(stuck ? "stalled" : "no picture")

@@ -62,6 +62,13 @@ final class PlayerModel {
     private var autoRotatedFor: String?
     private(set) var engineName = ""
     private(set) var errorMessage: String?
+    /// تفاصيل الفشل الحقيقية (المشغّل، السبب، الموقع، رد السيرفر) تطلع تحت الرسالة ومعها زر نسخ
+    private(set) var failureDetail: String?
+    private var failureLog: [String] = []
+    /// المصادر اللي عطيناها محاولة ثانية بمشغّل جديد قبل ما ننتقل لغيرها
+    private var freshRetried: Set<String> = []
+    /// كمّلنا من هالثانية (يطلع زر "من البداية" شوي)
+    private(set) var resumedFrom: Double?
     private(set) var showTryAnother = false
     private(set) var rate: Float = 1
     var surface: UIView? { engine?.surface }
@@ -109,6 +116,12 @@ final class PlayerModel {
         nextCountdown = nil
         triedSources = []
         autoAdvances = 0
+        freshRetried = []
+        lastKnownDuration = ((try? core?.progress(mediaId: context.ref.id)) ?? nil)?.durationS
+        failureLog = []
+        failureDetail = nil
+        // كل مرة تفتح الفيلم يدوّر للأفقي من جديد (قبل كان يتذكر إنه دوّر لنفس المصدر فما يدوّر ثاني مرة)
+        autoRotatedFor = nil
         let changedTitle = freshTitle || self.context?.streamId != context.streamId
         self.context = context
         if changedTitle {
@@ -124,6 +137,7 @@ final class PlayerModel {
             mergeSourceSubtitles(source)
         }
         let resume = startAt ?? resumePosition(for: context)
+        resumedFrom = (startAt == nil && resume > 1) ? resume : nil
         start(source, startAt: resume, forceVLC: false)
         miniHidden = false
         isPresented = true
@@ -142,6 +156,7 @@ final class PlayerModel {
         self.source = source
         triedSources.insert(source.id)
         errorMessage = nil
+        failureDetail = nil
         showTryAnother = false
         reportedOk = false
         loadingSince = Date()
@@ -174,8 +189,17 @@ final class PlayerModel {
             state = .loading
             isBuffering = true
             engine.setRate(rate)
-            engine.load(url: url, headers: headers, startAt: startAt)
             startTicking()
+            if useVLC, VLCEngine.stopping > 0 {
+                // نسخة VLC القديمة لسا تسكّر اتصالها بنفس الرابط: ننتظرها بدل ما نفتح الرابط مرتين
+                Task { [weak self, weak engine] in
+                    await VLCEngine.waitForPreviousStop()
+                    guard let self, let engine, engine === self.engine else { return }
+                    engine.load(url: url, headers: headers, startAt: startAt)
+                }
+            } else {
+                engine.load(url: url, headers: headers, startAt: startAt)
+            }
         }
     }
 
@@ -224,6 +248,7 @@ final class PlayerModel {
     private func handle(_ failure: EngineFailure) {
         guard let source else { return }
         let position = elapsed
+        noteFailure(failure, source: source, position: position)
         switch failure {
         case .nativeCannotPlay:
             // الأصلي ما قدر: نحفظ إن هذا المصدر يحتاج VLC ونحوّل من نفس الثانية
@@ -231,8 +256,23 @@ final class PlayerModel {
             app?.showToast(L("نحوّل لمشغّل VLC"))
             start(source, startAt: position, forceVLC: true)
         case .sourceFailed:
+            // ما اشتغل أبد: نعطيه محاولة وحدة بمشغّل جديد (بعد ما يسكّر القديم) قبل ما نحكم إنه خربان
+            if !reportedOk, !freshRetried.contains(source.id) {
+                freshRetried.insert(source.id)
+                let vlc = engineName == "VLC"
+                stopEngine()
+                state = .loading
+                isBuffering = true
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(800))
+                    guard let self, self.source?.id == source.id, self.errorMessage == nil else { return }
+                    self.start(source, startAt: position, forceVLC: vlc)
+                }
+                return
+            }
             try? core?.markSourceFailed(sourceId: source.id, nativeFailed: false)
-            if autoAdvances < 3, let next = nextCandidate() {
+            // ينقل لحاله للي بعده لين تخلص المصادر، وبعدها بس تطلع رسالة الخطأ
+            if autoAdvances < 8, let next = nextCandidate() {
                 autoAdvances += 1
                 app?.showToast(L("المصدر ما اشتغل، نجرب مصدر ثاني"))
                 mergeSourceSubtitles(next)
@@ -242,6 +282,65 @@ final class PlayerModel {
             }
         }
     }
+
+    /// يسجّل وش صار بالضبط: المشغّل والسبب والموقع ومن أي ثانية
+    private func noteFailure(_ failure: EngineFailure, source: RankedSource, position: Double) {
+        let reason: String
+        switch failure {
+        case let .nativeCannotPlay(r): reason = r
+        case let .sourceFailed(r): reason = r
+        }
+        var host = "-"
+        var urlString = ""
+        if case let .direct(u, _) = source.target {
+            urlString = u
+            host = URL(string: u)?.host() ?? "-"
+        }
+        let line = "\(engineName.isEmpty ? "?" : engineName): \(reason) · \(host) · \(L("من")) \(TimeFormat.clock(position))"
+        failureLog.append(line)
+        if failureLog.count > 6 { failureLog.removeFirst(failureLog.count - 6) }
+        failureDetail = failureLog.joined(separator: "\n")
+        probe(urlString, source: source)
+    }
+
+    /// نسأل السيرفر مباشرة عشان نعرف رده (403، 404، انتهى الرابط…)
+    private func probe(_ urlString: String, source: RankedSource) {
+        guard let url = URL(string: urlString), url.scheme?.hasPrefix("http") == true else { return }
+        var req = URLRequest(url: url, timeoutInterval: 8)
+        req.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        if case let .direct(_, headers) = source.target {
+            for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        }
+        Task { [weak self] in
+            let line: String
+            do {
+                let (_, response) = try await URLSession.shared.data(for: req)
+                let http = response as? HTTPURLResponse
+                let type = http?.value(forHTTPHeaderField: "Content-Type") ?? "-"
+                line = "HTTP \(http?.statusCode ?? 0) · \(type)"
+            } catch {
+                line = "HTTP: \(error.localizedDescription)"
+            }
+            guard let self, self.source?.id == source.id else { return }
+            self.failureLog.append(line)
+            self.failureDetail = self.failureLog.joined(separator: "\n")
+        }
+    }
+
+    /// النص اللي ينسخه زر النسخ: التفاصيل كلها مع الرابط
+    var failureReport: String {
+        var lines = [errorMessage ?? "", failureDetail ?? ""]
+        if let source, case let .direct(u, _) = source.target { lines.append(u) }
+        lines.append("\(context?.title ?? "") · \(source?.addon ?? "")")
+        return lines.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    func startOver() {
+        resumedFrom = nil
+        seek(to: 0)
+    }
+
+    func dismissResumeHint() { resumedFrom = nil }
 
     private func fail(_ message: String) {
         stopEngine()
@@ -496,6 +595,9 @@ final class PlayerModel {
         let shouldOffer = waiting && Date().timeIntervalSince(loadingSince) > 5
         if showTryAnother != shouldOffer { showTryAnother = shouldOffer }
         if isPlaying { saveProgress(force: false) }
+        // وقّف (إيقاف مؤقت أو انقطع): نحفظ المكان على طول
+        if wasPlayingAtSync, !isPlaying { saveProgress(force: true) }
+        wasPlayingAtSync = isPlaying
         if let context {
             NowPlaying.shared.attach(self)
             NowPlaying.shared.update(title: context.title, subtitle: context.subtitle,
@@ -532,6 +634,24 @@ final class PlayerModel {
 
     // MARK: - التقدّم
 
+    private var lastKnownDuration: Double?
+    private var wasPlayingAtSync = false
+
+    /// "2h 9min" أو "129 min" أو "2:09" → ثواني
+    static func runtimeSeconds(_ raw: String?) -> Double? {
+        guard let raw = raw?.lowercased(), !raw.isEmpty else { return nil }
+        var h = 0.0, m = 0.0
+        if let r = raw.range(of: #"(\d+)\s*h"#, options: .regularExpression) {
+            h = Double(raw[r].filter(\.isNumber)) ?? 0
+        }
+        if let r = raw.range(of: #"(\d+)\s*m"#, options: .regularExpression) {
+            m = Double(raw[r].filter(\.isNumber)) ?? 0
+        }
+        if h == 0, m == 0, let n = Double(raw.filter(\.isNumber)), !raw.contains(":") { m = n }
+        let total = (h * 60 + m) * 60
+        return total >= 600 ? total : nil
+    }
+
     private func saveProgress(force: Bool) {
         guard let context, let core, reportedOk || force else { return }
         guard force || Date().timeIntervalSince(lastSave) >= 10 else { return }
@@ -541,8 +661,13 @@ final class PlayerModel {
             try? core.removeProgress(mediaId: context.ref.id)
             return
         }
+        // المدة: من المشغّل، وإلا آخر مدة عرفناها لنفس العمل، وإلا مدة العمل من بياناته (عشان "باقي X د" تطلع لـ VLC بعد)
+        let knownDuration = duration.flatMap { $0 > 0 ? $0 : nil }
+            ?? lastKnownDuration
+            ?? Self.runtimeSeconds(context.meta?.runtime)
+        if let knownDuration { lastKnownDuration = knownDuration }
         let p = WatchProgress(mediaId: context.ref.id, episodeId: context.video?.id, kind: context.ref.kind, title: context.title,
-                              poster: context.meta?.poster ?? context.ref.poster, positionS: elapsed, durationS: duration, updatedAt: CoreClient.now)
+                              poster: context.meta?.poster ?? context.ref.poster, positionS: elapsed, durationS: knownDuration, updatedAt: CoreClient.now)
         try? core.saveProgress(progress: p)
         if force { app?.refreshContinueWatching() }
     }

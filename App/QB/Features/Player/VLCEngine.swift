@@ -86,6 +86,9 @@ final class VLCEngine: PlaybackEngine {
     private var lastTime: Double = -1
     private var lastMove = Date()
     private var pendingSeekUntil = Date.distantPast
+    /// مكان الاستكمال: لو VLC تجاهل start-time (بعض روابط النت) نقدّم له بأنفسنا أول ما يشتغل
+    private var resumeAt: Double = 0
+    private var resumeChecked = false
 
     private(set) var audioTracks: [TrackOption] = []
     private(set) var embeddedSubtitles: [TrackOption] = []
@@ -99,7 +102,11 @@ final class VLCEngine: PlaybackEngine {
         let media = VLCMedia(url: url)
         for option in VLCHeaderOptions.options(for: headers) { media.addOption(option) }
         if startAt > 1 { media.addOption(":start-time=\(Int(startAt))") }
+        resumeAt = startAt
         media.addOption(":network-caching=3000")
+        // VLC يرسم الوقت واسم الملف داخل الصورة بعد التقديم: نطفيه، الوقت عندنا بالشريط
+        media.addOption(":no-osd")
+        media.addOption(":no-video-title-show")
         player.drawable = view
         player.media = media
         state = .loading
@@ -150,6 +157,10 @@ final class VLCEngine: PlaybackEngine {
             lastTime = t
             lastMove = Date()
             hasPlayed = true
+        }
+        if hasPlayed, !resumeChecked, resumeAt > 1 {
+            resumeChecked = true
+            if t < resumeAt - 5 { seek(to: resumeAt) }
         }
         maxSeen = max(maxSeen, elapsed)
         let length = Double(player.media?.length.intValue ?? 0) / 1000
@@ -300,12 +311,25 @@ final class VLCEngine: PlaybackEngine {
         guard started else { return }
         let box = UncheckedBox(player)
         let surface = UncheckedBox(view)
+        Self.stopping += 1
         commands.async {
             box.value.stop()
             DispatchQueue.main.async {
                 box.value.drawable = nil
                 surface.value.removeFromSuperview()
+                VLCEngine.stopping = max(0, VLCEngine.stopping - 1)
             }
+        }
+    }
+
+    /// كم نسخة VLC قاعدة تسكّر اتصالها الحين (الإيقاف على النت ممكن يطوّل)
+    nonisolated(unsafe) static var stopping = 0
+
+    /// ينتظر (لين 4 ثواني) إن النسخة القديمة تسكّر، عشان ما نفتح نفس الرابط مرتين بنفس الوقت
+    static func waitForPreviousStop() async {
+        let until = Date().addingTimeInterval(4)
+        while stopping > 0, Date() < until {
+            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 }

@@ -15,6 +15,8 @@ struct PlayerHost: View {
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
+    /// يرجع false لحاله لو انلغى السحب (النظام أو زر ثاني أخذ اللمسة)، فما يعلق شي على الشاشة
+    @GestureState private var dragging = false
     /// السحب العمودي الحالي: صوت، إضاءة، أو خروج
     @State private var verticalKind: PlayerLogic.VerticalDrag = .dismiss
     @State private var levels = SideLevels()
@@ -60,14 +62,21 @@ struct PlayerHost: View {
                         .allowsHitTesting(false)
                 }
 
-                if let seekPreview {
+                // وقت السحب للتقديم بس: فوق بعيد عن أزرار التشغيل، ويختفي أول ما تشيل إصبعك
+                if let seekPreview, dragging {
                     Text("\(TimeFormat.clock(seekPreview)) / \(TimeFormat.clock(player.duration ?? 0))")
                         .font(Typo.time)
+                        .monospacedDigit()
                         .foregroundStyle(.white)
                         .padding(.horizontal, 16).padding(.vertical, 10)
                         .glassEffect(Glass.player, in: .capsule)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .padding(.top, 70)
                         .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
+
+                resumeHint
 
                 loadingOrError
 
@@ -93,6 +102,19 @@ struct PlayerHost: View {
         .onAppear {
             scheduleHide()
             player.coverAppeared()
+        }
+        .onChange(of: dragging) { _, active in
+            // السحب انتهى أو انلغى بدون onEnded: ننظّف كل شي
+            guard !active else { return }
+            Task {
+                // نعطي onEnded فرصة يخلّص (يقدّم أو يسكّر) قبل ما ننظّف
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !dragging else { return }
+                if seekPreview != nil { seekPreview = nil }
+                if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
+                if dragOffset > 0, !leaving { withAnimation(Motion.snappy) { dragOffset = 0 } }
+                dragAxis = nil
+            }
         }
         .onChange(of: player.state) { _, s in
             if s == .paused || s == .ended { showControls(autoHide: false) }
@@ -134,6 +156,7 @@ struct PlayerHost: View {
             }
             .gesture(
                 DragGesture(minimumDistance: 14)
+                    .updating($dragging) { _, state, _ in state = true }
                     .onChanged { v in
                         if dragAxis == nil {
                             dragAxis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
@@ -394,6 +417,33 @@ struct PlayerHost: View {
 
     // MARK: - التحميل والخطأ
 
+    /// "كمّلنا من 1:24" مع زر "من البداية" تحت الشريط العلوي، يختفي بعد 6 ثواني
+    @ViewBuilder
+    private var resumeHint: some View {
+        if let from = player.resumedFrom, player.errorMessage == nil, player.elapsed > 0 {
+            HStack(spacing: 10) {
+                Text(L("كمّلنا من %@", TimeFormat.clock(from))).font(Typo.caption).monospacedDigit()
+                Button {
+                    player.startOver()
+                    Haptics.tap()
+                } label: {
+                    Text(L("من البداية")).font(Typo.font(.semibold, 13, .footnote)).foregroundStyle(Palette.accent)
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14).frame(height: 36)
+            .glassEffect(Glass.player.interactive(), in: .capsule)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.top, controlsVisible ? 70 : 24)
+            .transition(.opacity)
+            .task(id: from) {
+                try? await Task.sleep(for: .seconds(6))
+                withAnimation(Motion.standard) { player.dismissResumeHint() }
+            }
+        }
+    }
+
     @ViewBuilder
     private var loadingOrError: some View {
         if let message = player.errorMessage {
@@ -401,10 +451,33 @@ struct PlayerHost: View {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 38)).foregroundStyle(Palette.accent)
                 Text(message).font(Typo.title).multilineTextAlignment(.center)
                 Text(L("جرّب مرة ثانية أو اختر مصدر ثاني")).font(Typo.info).foregroundStyle(.secondary)
+                if let detail = player.failureDetail {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(detail)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .environment(\.layoutDirection, .leftToRight)
+                        Button {
+                            UIPasteboard.general.string = player.failureReport
+                            Haptics.tap()
+                            app.showToast(L("انتسخت التفاصيل"))
+                        } label: {
+                            Label(L("نسخ التفاصيل"), systemImage: "doc.on.doc").font(Typo.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Palette.accent)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: 320)
+                    .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
                 HStack(spacing: 12) {
                     GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise", width: ButtonMetrics.pairWidth) { player.retry() }
-                    if player.canTryAnother {
-                        PrimaryButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath", width: ButtonMetrics.pairWidth) { player.tryAnotherSource() }
+                    // دايمًا شغّال: لو ما بقى مصدر ما جرّبناه، يفتح قائمة المصادر
+                    PrimaryButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath", width: ButtonMetrics.pairWidth) {
+                        if player.canTryAnother { player.tryAnotherSource() } else { sheet = .sources }
                     }
                 }
                 GlassButton(title: L("المصادر"), systemImage: "rectangle.stack.fill", width: ButtonMetrics.pairWidth) { sheet = .sources }
@@ -413,25 +486,13 @@ struct PlayerHost: View {
             .padding(28)
             .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .padding(24)
-        } else if player.state == .loading || (player.isBuffering && player.elapsed < 1) {
-            // مؤشر واحد بس: داخل زر التشغيل لما الأدوات ظاهرة، وبنفس مكانه لما تختفي
-            ZStack {
-                if !controlsVisible {
-                    ProgressView().controlSize(.small).tint(.white)
-                        .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
-                        .glassEffect(Glass.player, in: .circle)
-                        .transition(.opacity)
-                }
-                if player.showTryAnother, player.canTryAnother {
-                    GlassButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath") { player.tryAnotherSource() }
-                        .foregroundStyle(.white)
-                        .padding(.top, 150)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
-            }
-            .animation(Motion.standard, value: player.showTryAnother)
-            .animation(Motion.standard, value: controlsVisible)
-            .allowsHitTesting(player.showTryAnother)
+        } else if (player.state == .loading || (player.isBuffering && player.elapsed < 1)) && !controlsVisible {
+            // مؤشر واحد بس: داخل زر التشغيل لما الأدوات ظاهرة، وبنفس مكانه لما تختفي. ولا شي ثاني فوق الصورة
+            ProgressView().controlSize(.small).tint(.white)
+                .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
+                .glassEffect(Glass.player, in: .circle)
+                .transition(.opacity)
+                .allowsHitTesting(false)
         }
     }
 

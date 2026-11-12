@@ -65,6 +65,7 @@
 "الموسم %@" = "Season %@";
 "الموسم %@ · الحلقة %@" = "Season %@ · Episode %@";
 "انتسخ" = "Copied";
+"انتسخت التفاصيل" = "Details copied";
 "انثبتت %@" = "Installed %@";
 "انحذفت %@" = "Removed %@";
 "انحفظت المكتبة" = "Library saved";
@@ -134,6 +135,7 @@
 "كتالوجات" = "Catalogs";
 "كمّل المشاهدة" = "Continue watching";
 "كمّل م%@ ح%@" = "Resume S%@ E%@";
+"كمّلنا من %@" = "Resumed from %@";
 "لصق" = "Paste";
 "لغة الترجمة" = "Subtitle language";
 "لو الصورة أو الصوت مو طبيعي، VLC يشغّل كل الصيغ تقريبًا" = "If the picture or sound looks wrong, VLC plays almost every format";
@@ -171,9 +173,12 @@
 "مكتبتك فاضية" = "Your library is empty";
 "مكتبتي" = "My Library";
 "ملف الترجمة فاضي" = "The subtitle file is empty";
+"من" = "From";
+"من البداية" = "Start over";
 "نجمع المصادر…" = "Gathering sources…";
 "نحوّل لمشغّل VLC" = "Switching to VLC";
 "ندوّر أفضل مصدر…" = "Finding the best source…";
+"نسخ التفاصيل" = "Copy details";
 "نسخ الخطأ" = "Copy error";
 "نسخ الرابط" = "Copy link";
 "نص الخطأ" = "Error details";

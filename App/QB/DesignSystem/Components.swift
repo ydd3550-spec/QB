@@ -114,14 +114,23 @@ struct Chip: View {
                 if let systemImage { Image(systemName: systemImage).font(.caption.weight(.bold)) }
                 Text(title).lineLimit(1)
             }
-            .font(Typo.infoMedium)
+            .font(selected ? Typo.font(.semibold, 14, .subheadline) : Typo.infoMedium)
             .foregroundStyle(selected ? Palette.onAccent : .primary)
             .padding(.horizontal, 15)
             .frame(height: 36)
+            // المختار ذهبي صريح (مو زجاج مصبوغ يبان باهت)
+            .background {
+                if selected {
+                    Capsule()
+                        .fill(LinearGradient(colors: [Palette.accent, Palette.accent.opacity(0.85)], startPoint: .top, endPoint: .bottom))
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.35), lineWidth: 0.6))
+                        .shadow(color: Palette.accent.opacity(0.3), radius: 6, y: 2)
+                }
+            }
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .glassEffect(selected ? .regular.tint(Palette.accent).interactive() : .regular.interactive(), in: .capsule)
+        .buttonStyle(PrimaryPressStyle())
+        .glassEffect(.regular.interactive(), in: .capsule)
         .animation(Motion.snappy, value: selected)
     }
 }
@@ -397,5 +406,16 @@ struct PrimaryPressStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .brightness(configuration.isPressed ? -0.06 : 0)
             .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+
+extension View {
+    /// شريط علوي زجاجي: العنوان ينقرا لما يمر المحتوى تحته
+    func qbNavBar() -> some View {
+        self
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+            .scrollEdgeEffectStyle(.soft, for: .top)
     }
 }

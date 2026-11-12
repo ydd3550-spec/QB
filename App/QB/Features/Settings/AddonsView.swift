@@ -85,6 +85,7 @@ struct AddonsView: View {
         .qbScreenBackground()
         .scrollContentBackground(.hidden)
         .navigationTitle(L("الإضافات"))
+            .qbNavBar()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if filter == .all, app.addons.count > 1 { EditButton() }
@@ -211,10 +212,22 @@ struct AddonRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RemoteImage(url: manifest.logo, maxPixel: 120, contentMode: .fit, placeholderSymbol: "puzzlepiece.extension.fill")
-                .frame(width: 44, height: 44)
-                .background(Palette.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            // شعار الإضافة من الـ manifest، وتحته أول حرف من اسمها بالذهبي لو ما فيه شعار أو ما انفتح
+            ZStack {
+                LinearGradient(colors: [Palette.surfaceRaised, Palette.surface], startPoint: .top, endPoint: .bottom)
+                if let logo = Self.logoURL(manifest.logo) {
+                    RemoteImage(url: logo, maxPixel: 120, contentMode: .fit, placeholderSymbol: nil,
+                                placeholderText: String(manifest.name.prefix(1)).uppercased())
+                        .padding(4)
+                } else {
+                    Text(String(manifest.name.prefix(1)).uppercased())
+                        .font(Typo.font(.bold, 20, .title3))
+                        .foregroundStyle(Palette.accent)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(manifest.name).font(Typo.bodyMedium).lineLimit(1)
@@ -237,5 +250,15 @@ struct AddonRow: View {
         }
         .padding(.vertical, 4)
         .opacity(manifest.enabled ? 1 : 0.55)
+    }
+}
+
+
+extension AddonRow {
+    /// SVG ما ينفتح كصورة، وروابط http نخليها https
+    static func logoURL(_ raw: String?) -> String? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        if raw.lowercased().hasSuffix(".svg") { return nil }
+        return raw
     }
 }

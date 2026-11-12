@@ -39,9 +39,11 @@ struct DiscoverView: View {
             }
             .qbScreenBackground()
             .navigationTitle(L("اكتشف"))
+            .qbNavBar()
             .mediaDestinations(zoom)
             .task(id: app.addonsVersion) {
-                catalogs = app.core?.discoverCatalogs() ?? []
+                // "Calendar videos" و"Last videos" قوائم تنبيهات (Stremio يخفيها)، مو للتصفح
+                catalogs = (app.core?.discoverCatalogs() ?? []).filter { !Genres.hiddenCatalogIds.contains($0.catalog.id) }
                 reload()
             }
         }
@@ -66,7 +68,7 @@ struct DiscoverView: View {
             }
 
             if let c = selected, c.catalog.supportsGenre, !c.catalog.genres.isEmpty {
-                chipRow([("", L("الكل"))] + c.catalog.genres.map { ($0, $0) }, selected: genre ?? "") { g in
+                chipRow([("", L("الكل"))] + c.catalog.genres.map { ($0, Genres.display($0, arabic: app.language == .arabic)) }, selected: genre ?? "") { g in
                     genre = g.isEmpty ? nil : g
                     reload()
                 }

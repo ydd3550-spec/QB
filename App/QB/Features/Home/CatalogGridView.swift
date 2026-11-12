@@ -96,6 +96,7 @@ struct CatalogGridView: View {
         }
         .qbScreenBackground()
         .navigationTitle(route.title)
+            .qbNavBar()
         .navigationBarTitleDisplayMode(.large)
         .task {
             pager.reset(key: "\(route.addonId)/\(route.catalogId)/\(route.kind.wire)")

@@ -184,7 +184,7 @@ struct DetailsView: View {
             if let r = meta?.imdbRating, !r.isEmpty { RatingBadge(rating: r) }
             if let y = meta?.releaseInfo, !y.isEmpty { Text(y) }
             if let rt = meta?.runtime, !rt.isEmpty { Text(rt) }
-            if let g = meta.map({ Self.uniqueGenres($0.genres).prefix(2) }), !g.isEmpty { Text(g.joined(separator: " · ")).lineLimit(1) }
+            if let g = meta.map({ Self.uniqueGenres($0.genres).prefix(2) }), !g.isEmpty { Text(g.map { Genres.display($0, arabic: app.language == .arabic) }.joined(separator: " · ")).lineLimit(1) }
         }
         .font(Typo.caption)
         .foregroundStyle(.secondary)
@@ -280,7 +280,7 @@ struct DetailsView: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(Self.uniqueGenres(m.genres), id: \.self) { g in
-                            Text(g).font(Typo.caption)
+                            Text(Genres.display(g, arabic: app.language == .arabic)).font(Typo.caption)
                                 .padding(.horizontal, 12).frame(height: 30)
                                 .glassEffect(.regular, in: .capsule)
                         }
