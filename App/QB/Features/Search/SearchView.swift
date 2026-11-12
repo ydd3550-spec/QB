@@ -37,7 +37,9 @@ struct SearchView: View {
             }
             .task(id: query) { await search() }
             .onAppear { loadRecents() }
-            .mediaDestinations(zoom)
+            // من البحث: فتح ورجوع iOS العادي. السحب من اليمين يرجّعك وصفحة البحث بنتايجها ومكانك فيها حيّة تحتها،
+            // مع الظل والحركة الخفيفة حق iOS (حركة التكبير كانت تخلّي اللي تحتها أسود في تبويب البحث)
+            .mediaDestinations(zoom, zoomTransition: false)
         }
         // تسحب من طرف الشاشة وترجع للصفحة اللي كنت فيها قبل البحث، بنفس مكانك فيها
         .edgeSwipeBack(enabled: (app.paths[.search]?.isEmpty ?? true), backdrop: app.searchBackdrop) { app.goBackFromSearch() }

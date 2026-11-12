@@ -14,29 +14,32 @@ struct EdgeSwipeBack: ViewModifier {
     @State private var leaving = false
 
     func body(content: Content) -> some View {
+        let rtl = direction == .rightToLeft
         GeometryReader { geo in
             let width = max(geo.size.width, 1)
             let p = min(progress / width, 1)
+            // الحركة كلها بإحداثيات الشاشة نفسها (يسار ويمين حقيقيين)، والصفحة داخلها تبقى بالعربي.
+            // بالعربي: تسحب من اليمين، الصفحة تمشي لليسار مع إصبعك، واللي قبلها تدخل من اليمين
             content
+                .environment(\.layoutDirection, direction)
                 // ظل خفيف على حافة الصفحة اللي تمشي (مثل iOS)
-                .overlay(alignment: .leading) {
+                .overlay(alignment: rtl ? .trailing : .leading) {
                     if progress > 0 {
-                        LinearGradient(colors: [.clear, .black.opacity(0.22 * (1 - p))],
-                                       startPoint: direction == .rightToLeft ? .trailing : .leading,
-                                       endPoint: direction == .rightToLeft ? .leading : .trailing)
+                        LinearGradient(colors: rtl ? [.black.opacity(0.22 * (1 - p)), .clear] : [.clear, .black.opacity(0.22 * (1 - p))],
+                                       startPoint: .leading, endPoint: .trailing)
                             .frame(width: 14)
-                            .offset(x: -14)
+                            .offset(x: rtl ? 14 : -14)
                             .ignoresSafeArea()
                             .allowsHitTesting(false)
                     }
                 }
-                .offset(x: progress)
+                .offset(x: rtl ? -progress : progress)
                 .background {
                     if progress > 0 || leaving {
-                        underlay(width: width, p: p)
+                        underlay(width: width, p: p, rtl: rtl)
                     }
                 }
-                .overlay(alignment: .leading) {
+                .overlay(alignment: rtl ? .trailing : .leading) {
                     if enabled {
                         Color.clear
                             .frame(width: 22)
@@ -46,11 +49,12 @@ struct EdgeSwipeBack: ViewModifier {
                     }
                 }
         }
+        .environment(\.layoutDirection, .leftToRight)
     }
 
     /// الصفحة اللي قبل: تبدأ مزحومة لطرفها ومعتّمة، وتوصل مكانها مع آخر السحب
     @ViewBuilder
-    private func underlay(width: CGFloat, p: CGFloat) -> some View {
+    private func underlay(width: CGFloat, p: CGFloat, rtl: Bool) -> some View {
         ZStack {
             if let backdrop {
                 Image(uiImage: backdrop)
@@ -61,7 +65,8 @@ struct EdgeSwipeBack: ViewModifier {
             }
             Color.black.opacity(0.18 * (1 - p))
         }
-        .offset(x: -(width - progress) * 0.3)
+        // تبدأ مزحومة 30% لجهة طرف السحب وتوصل مكانها مع آخر السحب (نفس رجوع iOS)
+        .offset(x: (rtl ? 1 : -1) * (width - progress) * 0.3)
         .ignoresSafeArea()
         .allowsHitTesting(false)
     }

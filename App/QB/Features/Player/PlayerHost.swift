@@ -6,6 +6,7 @@ import QBCore
 struct PlayerHost: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.layoutDirection) private var layoutDirection
     private var player: PlayerModel { app.player }
 
     @State private var controlsVisible = true
@@ -17,7 +18,6 @@ struct PlayerHost: View {
     @State private var leaving = false
     /// البطاقة تختفي وهي نازلة (قبل لفّة الشاشة للطول)
     @State private var dismissFade = false
-    private static let stage = "playerStage"
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
@@ -124,6 +124,7 @@ struct PlayerHost: View {
                 nextUpCard
                     .opacity(dismiss.controlsOpacity)
             }
+            .environment(\.layoutDirection, layoutDirection)
             // السحب لتحت مثل بطاقات iOS: الزوايا تتدوّر لين توصل لزوايا الجهاز، والبطاقة تصغر شوي وتلحق الإصبع.
             // كله تحويل رسم بس (بدون تغيير مقاس أو مكان أي view)، فالفيديو يكمّل بنفس مقاسه وما ينعاد بناؤه
             .mask {
@@ -145,15 +146,14 @@ struct PlayerHost: View {
                     .scaleEffect(dismiss.scale, anchor: .center)
                     .offset(x: dismiss.x, y: dismiss.offset)
             }
+            // الإزاحة يمين ويسار بإحداثيات الشاشة نفسها (نفس اتجاه إصبعك بالعربي والإنجليزي)
+            .environment(\.layoutDirection, .leftToRight)
             .opacity(leaving && dismissFade ? 0 : 1)
             .allowsHitTesting(!leaving)
             .onAppear { player.setZoomViewport(screen) }
             .onChange(of: screen) { _, size in player.setZoomViewport(size) }
             .onChange(of: dragOffset) { _, d in player.dismissProgress = DismissCard(offset: d, x: 0, screen: screen).progress }
         }
-        // مرجع ثابت للإيماءات: ما يتحرّك مع البطاقة. قبل كانت الإيماءة تقيس على البطاقة اللي هي نفسها تحرّكها،
-        // فالإزاحة تتأرجح كل إطار بين مكان إصبعك والصفر، وتطلع صورتين فوق بعض وكل شي يتشوّه
-        .coordinateSpace(.named(Self.stage))
         // خلفية الشاشة شفافة: لما تسحب لتحت تشوف الصفحة اللي تحت مثل ما هي، وما تنعاد ولا تنبني من جديد
         .presentationBackground(.clear)
         .statusBarHidden(!controlsVisible)
@@ -242,7 +242,9 @@ struct PlayerHost: View {
                 if controlsVisible { hideControls() } else { showControls(autoHide: true) }
             }
             .gesture(
-                DragGesture(minimumDistance: 14, coordinateSpace: .named(Self.stage))
+                // إيماءة السحب تقيس على الشاشة نفسها، مو على البطاقة اللي هي تحرّكها. قبل كانت تقيس على البطاقة،
+                // فالإزاحة تتأرجح كل إطار بين مكان إصبعك والصفر، وتطلع صورتين فوق بعض وكل شي يتشوّه
+                DragGesture(minimumDistance: 14, coordinateSpace: .global)
                     .updating($dragging) { _, state, _ in state = true }
                     .onChanged { v in
                         // إصبعين يقرصون: هذا تكبير مو سحب
