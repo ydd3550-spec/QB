@@ -19,7 +19,7 @@
   "انتسخت التفاصيل": "Details copied",
   "كمّلنا من %@": "Resumed from %@",
   "من البداية": "Start over",
-  "%@ ثانية": "%@ seconds",
+  "%@ ثانية": "%@ s",
   "إلغاء": "Cancel",
   "إيقاف مؤقت": "Pause",
   "ابحث في كل إضافاتك": "Search all your add-ons",
@@ -100,7 +100,6 @@
   "تقرير الإضافات": "Add-on report",
   "تلقائي": "Automatic",
   "تم الإلغاء": "Cancelled",
-  "%@ ثانية": "%@ s",
   "ثانية": "seconds",
   "ثبّت إضافات مصادر من الإعدادات ← الإضافات": "Install source add-ons from Settings → Add-ons",
   "ثبّت إضافة فيها كتالوجات من الإعدادات ← الإضافات": "Install an add-on with catalogs from Settings → Add-ons",
@@ -186,5 +185,7 @@
   "تمام": "OK",
   "التطبيق شغّال، بس ما قدر يحفظ على الجهاز، فاللي تسويه ما بينحفظ بعد ما تقفله. هذا نص الخطأ:": "The app is running, but it couldn't save on this device, so nothing you do will be kept after you close it. Here's the error:",
   "نص الخطأ": "Error details",
-  "انتسخ": "Copied"
+  "انتسخ": "Copied",
+  "تكبير لملء الشاشة": "Zoom to fill",
+  "الحجم الأصلي": "Original size"
 }

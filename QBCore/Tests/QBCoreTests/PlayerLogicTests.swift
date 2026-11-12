@@ -72,4 +72,19 @@ struct PlayerLogicTests {
         #expect(PlayerLogic.swipeDismisses(translation: 60, predicted: 500))
         #expect(!PlayerLogic.swipeDismisses(translation: 60, predicted: 120))
     }
+
+    @Test func pinchZoom() {
+        // تفتح أصابعك: ملء الشاشة، تضمّها: الحجم الأصلي
+        #expect(PlayerLogic.pinchZoomDecision(magnification: 1.3, filled: false) == true)
+        #expect(PlayerLogic.pinchZoomDecision(magnification: 0.7, filled: true) == false)
+        // نفس الوضع أو حركة صغيرة: ما يتغيّر شي
+        #expect(PlayerLogic.pinchZoomDecision(magnification: 1.3, filled: true) == nil)
+        #expect(PlayerLogic.pinchZoomDecision(magnification: 0.7, filled: false) == nil)
+        #expect(PlayerLogic.pinchZoomDecision(magnification: 1.03, filled: false) == nil)
+        #expect(PlayerLogic.pinchZoomDecision(magnification: 0.97, filled: true) == nil)
+        // المعاينة محدودة
+        #expect(PlayerLogic.pinchPreviewScale(1) == 1)
+        #expect(PlayerLogic.pinchPreviewScale(5) <= 1.08)
+        #expect(PlayerLogic.pinchPreviewScale(0.1) >= 0.94)
+    }
 }

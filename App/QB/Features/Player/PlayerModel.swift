@@ -71,6 +71,10 @@ final class PlayerModel {
     private(set) var resumedFrom: Double?
     private(set) var showTryAnother = false
     private(set) var rate: Float = 1
+    /// التكبير بالإصبع (ملء الشاشة). ينحفظ طول ما نفس العمل شغّال، ويظل بعد التدوير والتحويل لـ VLC
+    private(set) var videoFill = false
+    /// مقاس شاشة المشغّل كاملة (يتغيّر مع التدوير)
+    private var zoomViewport: CGSize = .zero
     var surface: UIView? { engine?.surface }
     var isPlaying: Bool { state == .playing || state == .stalled }
 
@@ -125,6 +129,7 @@ final class PlayerModel {
         let changedTitle = freshTitle || self.context?.streamId != context.streamId
         self.context = context
         if changedTitle {
+            videoFill = false
             externalSubtitles = []
             selectedExternal = nil
             cues = []
@@ -186,6 +191,7 @@ final class PlayerModel {
             wire(engine)
             self.engine = engine
             engineName = engine.kindName
+            applyZoom()
             state = .loading
             isBuffering = true
             engine.setRate(rate)
@@ -481,6 +487,7 @@ final class PlayerModel {
     /// شاشة المشغّل ظهرت: ندوّر للأفقي لو الفيديو عرضي
     func coverAppeared() {
         coverOnScreen = true
+        applyZoom()
         autoRotatedFor = nil
         autoRotateIfNeeded()
     }
@@ -520,6 +527,7 @@ final class PlayerModel {
         stopEngine()
         context = nil
         source = nil
+        videoFill = false
         state = .idle
         errorMessage = nil
         nextUp = nil
@@ -532,8 +540,28 @@ final class PlayerModel {
         app?.refreshContinueWatching()
     }
 
+    // MARK: - التكبير
+
+    func setVideoFill(_ on: Bool) {
+        videoFill = on
+        applyZoom()
+    }
+
+    /// الشاشة تغيّر مقاسها (تدوير): VLC يحتاج نسبة القص الجديدة
+    func setZoomViewport(_ size: CGSize) {
+        guard size.width >= 1, size.height >= 1, size != zoomViewport else { return }
+        zoomViewport = size
+        applyZoom()
+    }
+
+    /// المصغّر يعرض الحجم الأصلي دايمًا، والتكبير يرجع أول ما ترجع شاشة المشغّل
+    private func applyZoom() {
+        engine?.setVideoFill(videoFill && coverOnScreen, viewport: zoomViewport)
+    }
+
     func didDismiss() {
         coverOnScreen = false
+        applyZoom()
         OrientationLock.lockPortrait()
         if case .failed = state { close() }
         if engine == nil, context != nil, state == .idle { close() }

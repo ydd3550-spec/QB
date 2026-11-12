@@ -329,6 +329,16 @@ final class NativeEngine: NSObject, PlaybackEngine {
         pip.stopPictureInPicture()
     }
 
+    /// ملء الشاشة = resizeAspectFill، الحجم الأصلي = resizeAspect
+    func setVideoFill(_ fill: Bool, viewport: CGSize) {
+        let gravity: AVLayerVideoGravity = fill ? .resizeAspectFill : .resizeAspect
+        guard view.playerLayer.videoGravity != gravity else { return }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.25)
+        view.playerLayer.videoGravity = gravity
+        CATransaction.commit()
+    }
+
     func setAutoPiP(_ on: Bool) {
         pip?.canStartPictureInPictureAutomaticallyFromInline = on
     }

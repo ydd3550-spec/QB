@@ -68,6 +68,10 @@ protocol PlaybackEngine: AnyObject {
     /// nil يطفي ترجمة الملف
     func selectEmbeddedSubtitle(_ id: String?)
 
+    /// التكبير بالإصبع: true يملّي الشاشة (يقص الأطراف)، false الحجم الأصلي بحواف سودا.
+    /// viewport مقاس الشاشة كاملة، يحتاجه VLC عشان يقص على نسبتها
+    func setVideoFill(_ fill: Bool, viewport: CGSize)
+
     func startPiP()
     /// يرجّع الفيديو من الصورة للمشغّل
     func stopPiP()

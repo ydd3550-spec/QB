@@ -63,4 +63,19 @@ public enum PlayerLogic {
     public static func swipeDismisses(translation: CGFloat, predicted: CGFloat) -> Bool {
         translation > 140 || predicted > 360
     }
+
+    /// القرص بالإصبعين خلص: true ملء الشاشة، false الحجم الأصلي، nil ما يتغيّر شي
+    /// (حركة صغيرة، أو نفس الوضع الحالي)
+    public static func pinchZoomDecision(magnification: CGFloat, filled: Bool) -> Bool? {
+        guard magnification.isFinite, magnification > 0 else { return nil }
+        if magnification >= 1.08, !filled { return true }
+        if magnification <= 0.93, filled { return false }
+        return nil
+    }
+
+    /// معاينة خفيفة للفيديو وقت القرص: تتبع أصابعك شوي ومحدودة عشان ما تتمطّط الصورة
+    public static func pinchPreviewScale(_ magnification: CGFloat) -> CGFloat {
+        guard magnification.isFinite, magnification > 0 else { return 1 }
+        return 1 + min(max((magnification - 1) * 0.3, -0.06), 0.08)
+    }
 }

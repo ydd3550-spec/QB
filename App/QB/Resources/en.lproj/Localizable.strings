@@ -41,6 +41,7 @@
 "التقدّم" = "Progress";
 "التلقائي يبدأ بالمشغّل الأصلي ويحوّل لـ VLC لو الملف ما اشتغل" = "Automatic starts with the native player and switches to VLC if the file won't play";
 "الجودة المفضلة" = "Preferred quality";
+"الحجم الأصلي" = "Original size";
 "الحفظ متوقف مؤقتًا" = "Saving is paused";
 "الحلقات" = "Episodes";
 "الحلقة %@" = "Episode %@";
@@ -95,6 +96,7 @@
 "تفاصيل" = "Details";
 "تقديم 10 ثواني" = "Forward 10 seconds";
 "تقرير الإضافات" = "Add-on report";
+"تكبير لملء الشاشة" = "Zoom to fill";
 "تلقائي" = "Automatic";
 "تم الإلغاء" = "Cancelled";
 "تمام" = "OK";

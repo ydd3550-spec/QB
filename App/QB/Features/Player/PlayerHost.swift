@@ -29,6 +29,15 @@ struct PlayerHost: View {
     @State private var rippleTick = 0
     @State private var rippleTask: Task<Void, Never>?
     @State private var sheet: PlayerSheet?
+    /// القرص بالإصبعين: مقداره الحي، ويرجع 1 بسبرنق لما تشيل أصابعك أو ينلغي
+    @GestureState(resetTransaction: Transaction(animation: .spring(response: 0.32, dampingFraction: 0.82)))
+    private var pinchMagnification: CGFloat = 1
+    @GestureState private var pinching = false
+    /// القرص بدأ وسط سحب: السحب ينلغي (لا تقديم ولا صوت ولا خروج)
+    @State private var dragVoided = false
+    /// الشارة الصغيرة "تكبير لملء الشاشة" / "الحجم الأصلي"
+    @State private var zoomPill: Bool?
+    @State private var zoomPillTick = 0
 
     enum RippleSide { case back, forward }
 
@@ -39,10 +48,13 @@ struct PlayerHost: View {
 
     var body: some View {
         GeometryReader { geo in
+            let screen = fullScreenSize(geo)
             ZStack {
                 Color.black.ignoresSafeArea()
 
                 EngineSurface(surface: player.surface)
+                    // معاينة خفيفة وقت القرص، وترجع لمكانها أول ما تشيل أصابعك
+                    .scaleEffect(PlayerLogic.pinchPreviewScale(pinchMagnification))
                     .ignoresSafeArea()
                     .opacity(player.surface == nil ? 0 : 1)
 
@@ -78,6 +90,8 @@ struct PlayerHost: View {
 
                 resumeHint
 
+                zoomHint
+
                 loadingOrError
 
                 SideLevelPill(levels: levels)
@@ -93,6 +107,8 @@ struct PlayerHost: View {
             .offset(y: dragOffset)
             .scaleEffect(1 - min(dragOffset / 1600, 0.12))
             .allowsHitTesting(!leaving)
+            .onAppear { player.setZoomViewport(screen) }
+            .onChange(of: screen) { _, size in player.setZoomViewport(size) }
         }
         // خلفية الشاشة شفافة: لما تسحب لتحت تشوف الصفحة اللي تحت مثل ما هي، وما تنعاد ولا تنبني من جديد
         .presentationBackground(.clear)
@@ -103,6 +119,13 @@ struct PlayerHost: View {
             scheduleHide()
             player.coverAppeared()
         }
+        .onChange(of: pinching) { _, active in
+            if active {
+                voidDrag()
+            } else if !dragging {
+                dragVoided = false
+            }
+        }
         .onChange(of: dragging) { _, active in
             // السحب انتهى أو انلغى بدون onEnded: ننظّف كل شي
             guard !active else { return }
@@ -110,6 +133,7 @@ struct PlayerHost: View {
                 // نعطي onEnded فرصة يخلّص (يقدّم أو يسكّر) قبل ما ننظّف
                 try? await Task.sleep(for: .milliseconds(150))
                 guard !dragging else { return }
+                if !pinching { dragVoided = false }
                 if seekPreview != nil { seekPreview = nil }
                 if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
                 if dragOffset > 0, !leaving { withAnimation(Motion.snappy) { dragOffset = 0 } }
@@ -158,6 +182,8 @@ struct PlayerHost: View {
                 DragGesture(minimumDistance: 14)
                     .updating($dragging) { _, state, _ in state = true }
                     .onChanged { v in
+                        // إصبعين يقرصون: هذا تكبير مو سحب
+                        guard !pinching, !dragVoided else { return }
                         if dragAxis == nil {
                             dragAxis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
                             seekStart = player.elapsed
@@ -186,6 +212,10 @@ struct PlayerHost: View {
                     }
                     .onEnded { v in
                         defer { dragAxis = nil }
+                        if dragVoided || pinching {
+                            dragVoided = pinching
+                            return
+                        }
                         if dragAxis == .horizontal, let target = seekPreview {
                             player.seek(to: target)
                             seekPreview = nil
@@ -213,6 +243,47 @@ struct PlayerHost: View {
                         }
                     }
             )
+            // التكبير بالإصبع مثل يوتيوب: تفتح أصابعك يملّي الشاشة، تضمّها يرجع للحجم الأصلي
+            .simultaneousGesture(
+                MagnifyGesture(minimumScaleDelta: 0.02)
+                    .updating($pinchMagnification) { v, state, _ in state = v.magnification }
+                    .updating($pinching) { _, state, _ in state = true }
+                    .onEnded { v in
+                        guard !leaving, player.errorMessage == nil else { return }
+                        switch PlayerLogic.pinchZoomDecision(magnification: v.magnification, filled: player.videoFill) {
+                        case .some(let fill): setZoom(fill)
+                        case .none: break
+                        }
+                    }
+            )
+    }
+
+    /// مقاس الشاشة كامل مع الحواف الآمنة (الفيديو يغطيها كلها)
+    private func fullScreenSize(_ geo: GeometryProxy) -> CGSize {
+        let i = geo.safeAreaInsets
+        return CGSize(width: geo.size.width + i.leading + i.trailing, height: geo.size.height + i.top + i.bottom)
+    }
+
+    /// القرص بدأ والسحب شغّال: نرجّع كل شي غيّره السحب بدون ما ننفّذه
+    private func voidDrag() {
+        dragVoided = true
+        if seekPreview != nil { seekPreview = nil }
+        if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
+        if dragOffset > 0, !leaving { withAnimation(Motion.snappy) { dragOffset = 0 } }
+        dragAxis = nil
+    }
+
+    private func setZoom(_ fill: Bool) {
+        player.setVideoFill(fill)
+        Haptics.tap()
+        zoomPillTick += 1
+        let token = zoomPillTick
+        withAnimation(.easeOut(duration: 0.18)) { zoomPill = fill }
+        Task {
+            try? await Task.sleep(for: .milliseconds(1400))
+            guard zoomPillTick == token else { return }
+            withAnimation(.easeOut(duration: 0.35)) { zoomPill = nil }
+        }
     }
 
     private func flash(_ side: RippleSide) {
@@ -342,6 +413,7 @@ struct PlayerHost: View {
         .accessibilityLabel(shownPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
         .accessibilityAction(named: L("رجوع 10 ثواني")) { player.skip(-10) }
         .accessibilityAction(named: L("تقديم 10 ثواني")) { player.skip(10) }
+        .accessibilityAction(named: player.videoFill ? L("الحجم الأصلي") : L("تكبير لملء الشاشة")) { setZoom(!player.videoFill) }
         .environment(\.layoutDirection, .leftToRight)
         .opacity(player.errorMessage == nil ? 0.92 : 0)
     }
@@ -441,6 +513,28 @@ struct PlayerHost: View {
                 try? await Task.sleep(for: .seconds(6))
                 withAnimation(Motion.standard) { player.dismissResumeHint() }
             }
+        }
+    }
+
+    /// شارة زجاجية صغيرة فوق (تحت الشريط العلوي لو ظاهر)، بعيد عن الأزرار ونص الصورة، وتختفي لحالها
+    @ViewBuilder
+    private var zoomHint: some View {
+        if let fill = zoomPill {
+            let resumeShown = player.resumedFrom != nil && player.errorMessage == nil && player.elapsed > 0
+            HStack(spacing: 7) {
+                Image(systemName: fill ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(fill ? L("تكبير لملء الشاشة") : L("الحجم الأصلي"))
+                    .font(Typo.caption)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14).frame(height: 34)
+            .glassEffect(Glass.player, in: .capsule)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .padding(.top, (controlsVisible ? 70 : 24) + (resumeShown ? 44 : 0))
+            .allowsHitTesting(false)
+            .transition(.opacity)
+            .id(fill)
         }
     }
 

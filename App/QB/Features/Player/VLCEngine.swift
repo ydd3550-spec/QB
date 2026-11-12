@@ -89,6 +89,8 @@ final class VLCEngine: PlaybackEngine {
     /// مكان الاستكمال: لو VLC تجاهل start-time (بعض روابط النت) نقدّم له بأنفسنا أول ما يشتغل
     private var resumeAt: Double = 0
     private var resumeChecked = false
+    /// قص الصورة على نسبة الشاشة ("عرض:طول") لما يكون التكبير شغّال، nil = الحجم الأصلي
+    private var cropRatio: String?
 
     private(set) var audioTracks: [TrackOption] = []
     private(set) var embeddedSubtitles: [TrackOption] = []
@@ -113,10 +115,36 @@ final class VLCEngine: PlaybackEngine {
         isBuffering = true
         loadStarted = Date()
         player.play()
+        applyCrop()
         tick = Task { [weak self] in
             while !Task.isCancelled {
                 self?.poll()
                 try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    /// ملء الشاشة: VLC يقص الصورة على نسبة الشاشة نفسها، فتملّيها بدون ما تتمطّط
+    func setVideoFill(_ fill: Bool, viewport: CGSize) {
+        var ratio: String?
+        if fill, viewport.width >= 1, viewport.height >= 1 {
+            ratio = "\(Int(viewport.width.rounded())):\(Int(viewport.height.rounded()))"
+        }
+        guard ratio != cropRatio else { return }
+        cropRatio = ratio
+        applyCrop()
+    }
+
+    private func applyCrop() {
+        guard started, !shutDown else { return }
+        let box = UncheckedBox(player)
+        let ratio = cropRatio
+        commands.async {
+            if let ratio {
+                // libVLC ياخذ نسخة من النص، فيكفي يعيش وقت الاستدعاء
+                ratio.withCString { box.value.videoCropGeometry = UnsafeMutablePointer(mutating: $0) }
+            } else {
+                box.value.videoCropGeometry = nil
             }
         }
     }
@@ -170,7 +198,12 @@ final class VLCEngine: PlaybackEngine {
             duration = t + Double(-remaining) / 1000
         }
         let vs = player.videoSize
-        if vs.width > 0, vs.height > 0, vs != videoSize { videoSize = vs }
+        if vs.width > 0, vs.height > 0, vs != videoSize {
+            let first = videoSize == .zero
+            videoSize = vs
+            // مخرج الصورة انولد الحين: نعيد القص عليه لو التكبير شغّال من قبل
+            if first, cropRatio != nil { applyCrop() }
+        }
         // مباشر: اشتغل فعلًا، ما له مدة، وما يقبل التقديم
         isLive = hasPlayed && duration == nil && !player.isSeekable && elapsed > 3
 
