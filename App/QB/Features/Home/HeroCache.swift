@@ -141,9 +141,18 @@ struct HeroShimmer: View {
 
 /// بانر التحميل كامل: اللمعة + مكان العنوان والأزرار
 struct HeroPlaceholder: View {
+    /// كم انسحبت الصفحة لتحت: اللمعة تطول لفوق وتعبّي المسافة مثل الصورة
+    var pull: CGFloat = 0
+
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            HeroShimmer()
+            Color.clear
+                .frame(height: 540)
+                .overlay(alignment: .bottom) {
+                    HeroShimmer()
+                        .frame(height: 540 + pull)
+                        .clipped()
+                }
                 .overlay(alignment: .bottom) { Palette.scrim.frame(height: 300) }
             VStack(alignment: .leading, spacing: 12) {
                 Capsule().fill(.white.opacity(0.10)).frame(width: 210, height: 30)

@@ -30,7 +30,12 @@ struct HomeView: View {
                                     }
                                     .transition(.opacity)
                             } else if loading || !app.ready {
-                                HeroPlaceholder()
+                                HeroPlaceholder(pull: max(pull, heroGap))
+                                    .onGeometryChange(for: CGFloat.self) { g in
+                                        max(0, (g.frame(in: .scrollView(axis: .vertical)).minY * 2).rounded() / 2)
+                                    } action: { gap in
+                                        if gap != heroGap { heroGap = gap }
+                                    }
                                     .transition(.opacity)
                             }
                         }
@@ -56,6 +61,8 @@ struct HomeView: View {
                         }
                     }
                     .padding(.bottom, 40)
+                    // الصفحة بعرض الشاشة بالضبط (مثل صفحة التفاصيل): ما فيه شي أعرض يزحزحها وانت تسحب
+                    .containerRelativeFrame(.horizontal)
                 }
                 .ignoresSafeArea(edges: (heroItem == nil && !loading && app.ready) ? [] : .top)
                 // نفس سحب صفحة التفاصيل بالضبط
@@ -146,8 +153,10 @@ struct HeroBanner: View {
                 Color.clear
                     .frame(height: 540)
                     .overlay(alignment: .bottom) {
-                        HeroImage(url: item.background ?? item.poster)
+                        // الصورة داخل إطار بعرض الشاشة بالضبط: ما تطلع حوافها ولا تدفّ الصفحة وانت تسحب
+                        Color.clear
                             .frame(height: 540 + pull)
+                            .overlay { HeroImage(url: item.background ?? item.poster) }
                             .clipped()
                             .overlay(alignment: .top) { Palette.topScrim.frame(height: 140) }
                     }
