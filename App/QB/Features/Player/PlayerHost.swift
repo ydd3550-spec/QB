@@ -11,6 +11,8 @@ struct PlayerHost: View {
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var dragOffset: CGFloat = 0
+    /// البطاقة تلحق إصبعك يمين ويسار بعد (مثل صفحة التفاصيل)
+    @State private var dragX: CGFloat = 0
     /// السحب لتحت خلص وقاعد نطلع: نوقف أي إيماءة ثانية لين تختفي الشاشة
     @State private var leaving = false
     /// البطاقة تختفي وهي نازلة (قبل لفّة الشاشة للطول)
@@ -53,7 +55,7 @@ struct PlayerHost: View {
     var body: some View {
         GeometryReader { geo in
             let screen = fullScreenSize(geo)
-            let dismiss = DismissCard(offset: dragOffset, screen: screen)
+            let dismiss = DismissCard(offset: dragOffset, x: dragX, screen: screen)
             ZStack {
                 Color.black.ignoresSafeArea()
 
@@ -141,13 +143,13 @@ struct PlayerHost: View {
             .visualEffect { content, _ in
                 content
                     .scaleEffect(dismiss.scale, anchor: .center)
-                    .offset(y: dismiss.offset)
+                    .offset(x: dismiss.x, y: dismiss.offset)
             }
             .opacity(leaving && dismissFade ? 0 : 1)
             .allowsHitTesting(!leaving)
             .onAppear { player.setZoomViewport(screen) }
             .onChange(of: screen) { _, size in player.setZoomViewport(size) }
-            .onChange(of: dragOffset) { _, d in player.dismissProgress = DismissCard(offset: d, screen: screen).progress }
+            .onChange(of: dragOffset) { _, d in player.dismissProgress = DismissCard(offset: d, x: 0, screen: screen).progress }
         }
         // مرجع ثابت للإيماءات: ما يتحرّك مع البطاقة. قبل كانت الإيماءة تقيس على البطاقة اللي هي نفسها تحرّكها،
         // فالإزاحة تتأرجح كل إطار بين مكان إصبعك والصفر، وتطلع صورتين فوق بعض وكل شي يتشوّه
@@ -197,7 +199,7 @@ struct PlayerHost: View {
                 if !pinching { dragVoided = false }
                 if seekPreview != nil { seekPreview = nil }
                 if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-                if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0 } }
+                if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
                 dragAxis = nil
             }
         }
@@ -264,6 +266,8 @@ struct PlayerHost: View {
                         case .vertical:
                             if verticalKind == .dismiss {
                                 dragOffset = max(0, v.translation.height)
+                                // يمين ويسار: يلحق الإصبع، أخف شوي من فوق وتحت
+                                dragX = v.translation.width * 0.85
                             } else {
                                 levels.change(dy: v.translation.height, height: size.height)
                             }
@@ -306,7 +310,7 @@ struct PlayerHost: View {
                                 }
                             } else {
                                 // يرجع بنطّة خفيفة، ولو لمستها وهي راجعة تمسكها من مكانها
-                                withAnimation(DismissCard.springBack) { dragOffset = 0 }
+                                withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 }
                             }
                         }
                     }
@@ -337,7 +341,7 @@ struct PlayerHost: View {
         dragVoided = true
         if seekPreview != nil { seekPreview = nil }
         if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-        if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0 } }
+        if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
         dragAxis = nil
     }
 
@@ -974,20 +978,22 @@ struct AirPlayButton: UIViewRepresentable {
 /// تلحق الإصبع 1:1، تصغر شوي، وزواياها تتدوّر لين توصل لزوايا الشاشة
 struct DismissCard {
     let offset: CGFloat
+    var x: CGFloat = 0
     let screen: CGSize
 
-    /// 0 مكانها، 1 طلعت من الشاشة تقريبًا
+    /// 0 مكانها، 1 نزلت كثير
     var progress: Double {
         guard screen.height > 0 else { return 0 }
-        return Double(min(max(offset / (screen.height * 0.75), 0), 1))
+        return Double(min(max(offset / (screen.height * 0.6), 0), 1))
     }
 
-    var scale: CGFloat { 1 - 0.1 * CGFloat(progress) }
+    /// تصغر مع النزول مثل صفحة التفاصيل (لين 62% تقريبًا)، بنفس النسبة بالطول والعرض فالجوانب تبقى كاملة ومتساوية
+    var scale: CGFloat { 1 - 0.38 * CGFloat(progress) }
 
-    /// الزوايا توصل لزوايا الجهاز خلال أول 90 نقطة سحب
+    /// الزوايا توصل لزوايا الجهاز بسرعة أول ما تبدأ تسحب
     var cornerRadius: CGFloat {
         guard offset > 0 else { return 0 }
-        return Self.deviceCornerRadius * min(offset / 90, 1)
+        return Self.deviceCornerRadius * min(offset / 36, 1)
     }
 
     /// الأزرار تختفي خلال أول 70 نقطة

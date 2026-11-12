@@ -124,16 +124,15 @@ extension View {
     }
 }
 
-/// الصفحة اللي ورا المشغّل: صغيرة شوي ومعتّمة وهو فوقها، وتكبر وتنوّر مع ما تسحبه لتحت (مثل شيتات iOS).
-/// تحويل رسم بس، فالصفحة ما ينعاد ترتيبها ولا تنبني من جديد
+/// الصفحة اللي ورا المشغّل: معتّمة وهو فوقها، وتنوّر مع ما تسحبه لتحت.
+/// طبقة فوقها بس، فالصفحة ما ينعاد ترتيبها ولا تنبني من جديد
 private struct BehindPlayerEffect: ViewModifier {
     let player: PlayerModel
 
     func body(content: Content) -> some View {
         let p = player.isPresented ? player.dismissProgress : 1
-        let scale = 0.94 + 0.06 * p
+        // الصفحة اللي ورا تبان كاملة ومعتّمة حول البطاقة (مثل سحب صفحة التفاصيل)
         content
-            .visualEffect { c, _ in c.scaleEffect(scale) }
             .overlay {
                 GeometryReader { g in
                     // بالعرض الصفحة اللي ورا مرتّبة للطول أصلًا، فنغطيها بزجاج مموّه بدل ما تبان أزرارها مقصوصة تحت البطاقة
@@ -142,7 +141,7 @@ private struct BehindPlayerEffect: ViewModifier {
                         if landscape, p < 1 {
                             Rectangle().fill(.regularMaterial).opacity(1 - p)
                         }
-                        Color.black.opacity((landscape ? 0.5 : 0.4) * (1 - p))
+                        Color.black.opacity((landscape ? 0.45 : 0.3) * (1 - p))
                     }
                     .ignoresSafeArea()
                 }
