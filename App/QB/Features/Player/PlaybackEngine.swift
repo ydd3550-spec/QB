@@ -69,6 +69,8 @@ protocol PlaybackEngine: AnyObject {
     func selectEmbeddedSubtitle(_ id: String?)
 
     func startPiP()
+    /// يرجّع الفيديو من الصورة للمشغّل
+    func stopPiP()
     func setAutoPiP(_ on: Bool)
 }
 

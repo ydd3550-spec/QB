@@ -459,6 +459,13 @@ final class PlayerModel {
             saveProgress(force: true)
             // VLC ما يدعم صورة داخل صورة، نوقفه بدل ما يرسم بالخلفية
             if engineName == "VLC" { pause() }
+        case .active:
+            // رجعت للتطبيق والفيديو بالصورة: نرجّعه للمشغّل بنفس المكان وهو شغّال
+            if pipActive {
+                miniHidden = false
+                isPresented = true
+                engine?.stopPiP()
+            }
         default:
             break
         }

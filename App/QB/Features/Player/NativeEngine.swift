@@ -304,6 +304,11 @@ final class NativeEngine: NSObject, PlaybackEngine {
         pip.startPictureInPicture()
     }
 
+    func stopPiP() {
+        guard let pip, pip.isPictureInPictureActive else { return }
+        pip.stopPictureInPicture()
+    }
+
     func setAutoPiP(_ on: Bool) {
         pip?.canStartPictureInPictureAutomaticallyFromInline = on
     }

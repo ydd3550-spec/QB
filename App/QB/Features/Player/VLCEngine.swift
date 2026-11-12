@@ -285,6 +285,7 @@ final class VLCEngine: PlaybackEngine {
     }
 
     func startPiP() {}
+    func stopPiP() {}
     func setAutoPiP(_ on: Bool) {}
 
     /// يوقف VLC من نفس طابور الأوامر (بعد أي أمر باقي)، ويفك المنظر على الخيط الرئيسي.
