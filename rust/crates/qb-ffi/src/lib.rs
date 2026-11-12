@@ -51,6 +51,12 @@ impl QBCore {
         Ok(Arc::new(QBCore { core: qb_core::Core::new(&data_dir)? }))
     }
 
+    /// نواة بدون تخزين على الجهاز: آخر حل لو فتح القاعدة فشل في كل المجلدات
+    #[uniffi::constructor]
+    pub fn in_memory() -> Result<Arc<Self>, CoreError> {
+        Ok(Arc::new(QBCore { core: qb_core::Core::in_memory()? }))
+    }
+
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_string()
     }

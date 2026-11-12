@@ -42,12 +42,57 @@ struct RootView: View {
         }
         .overlay {
             if let err = model.startupError {
-                EmptyStateView(title: L("ما اشتغل التطبيق"), systemImage: "exclamationmark.triangle", message: err)
+                StartupErrorView(message: err, detail: model.startupDetail)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Palette.background.ignoresSafeArea())
             }
         }
+        .alert(L("الحفظ متوقف مؤقتًا"), isPresented: Binding(get: { model.storageWarning != nil }, set: { if !$0 { model.storageWarning = nil } })) {
+            Button(L("نسخ الخطأ")) { UIPasteboard.general.string = model.storageWarning }
+            Button(L("تمام"), role: .cancel) {}
+        } message: {
+            Text(L("التطبيق شغّال، بس ما قدر يحفظ على الجهاز، فاللي تسويه ما بينحفظ بعد ما تقفله. هذا نص الخطأ:") + "\n\n" + (model.storageWarning ?? ""))
+        }
         .background(Palette.background.ignoresSafeArea())
+    }
+}
+
+/// شاشة فشل التشغيل: الرسالة، ونص الخطأ الحقيقي من النواة (ينقدر يتحدد وينسخ)، وزر إعادة المحاولة
+private struct StartupErrorView: View {
+    @Environment(AppModel.self) private var model
+    let message: String
+    let detail: String?
+    @State private var copied = false
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                EmptyStateView(title: L("ما اشتغل التطبيق"), systemImage: "exclamationmark.triangle", message: message)
+                if let detail {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(L("نص الخطأ")).font(Typo.info).foregroundStyle(.secondary)
+                        Text(verbatim: detail)
+                            .font(.system(.footnote, design: .monospaced))
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .environment(\.layoutDirection, .leftToRight)
+                    }
+                    .padding(14)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, 20)
+                    GlassButton(title: copied ? L("انتسخ") : L("نسخ الخطأ"), systemImage: "doc.on.doc") {
+                        UIPasteboard.general.string = detail
+                        copied = true
+                    }
+                }
+                GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise") {
+                    Task { await model.retryStartup() }
+                }
+                .padding(.bottom, 30)
+            }
+            .padding(.top, 40)
+        }
     }
 }
 

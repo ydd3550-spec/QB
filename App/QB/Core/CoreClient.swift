@@ -1,5 +1,17 @@
 import Foundation
 import QBCore
+import os
+
+/// نتيجة تشغيل النواة: النواة نفسها، ونص الخطأ الحقيقي لو فشلت، وتنبيه لو اشتغلت بدون حفظ
+struct CoreStartup {
+    var core: QbCore?
+    /// نص الخطأ كامل (لو ما اشتغلت النواة أبد)
+    var error: String?
+    /// اشتغلت بالذاكرة بس (ما تنحفظ الأشياء)، وهذا سبب فشل التخزين
+    var warning: String?
+}
+
+let coreLog = Logger(subsystem: "app.qb", category: "core")
 
 /// أحداث المصادر وهي توصل من Rust
 enum SourceEvent: Sendable {
@@ -40,11 +52,68 @@ final class SearchStream: SearchListener, @unchecked Sendable {
 
 /// غلاف بسيط حول النواة: يبدأها، ويرجّع رسائل خطأ مفهومة
 enum CoreClient {
-    static func make() -> QbCore? {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("QB", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return try? QbCore(dataDir: dir.path)
+    /// يجرّب يبدأ النواة في Application Support، بعدين Caches، بعدين tmp، وآخر حل بالذاكرة.
+    /// كل خطأ ينحفظ بنصه الحقيقي عشان يبان في شاشة الخطأ بدل ما ينبلع.
+    static func make() -> CoreStartup {
+        let fm = FileManager.default
+        var candidates: [(String, URL)] = []
+        if let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            candidates.append(("ApplicationSupport", support.appendingPathComponent("QB", isDirectory: true)))
+        }
+        if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            candidates.append(("Caches", caches.appendingPathComponent("QB", isDirectory: true)))
+        }
+        candidates.append(("tmp", fm.temporaryDirectory.appendingPathComponent("QB", isDirectory: true)))
+
+        var failures: [String] = []
+        for (name, url) in candidates {
+            var dir = url
+            do {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try? dir.setResourceValues(values)
+            } catch {
+                failures.append("[\(name)] mkdir: \(describe(error))")
+                coreLog.error("core dir \(name, privacy: .public) mkdir failed: \(describe(error), privacy: .public)")
+                continue
+            }
+            do {
+                let core = try QbCore(dataDir: dir.path)
+                // لو اشتغلت في مجلد بديل فالحفظ شغّال، نكتفي بالسجل
+                coreLog.info("core started in \(name, privacy: .public); earlier failures: \(failures.joined(separator: " | "), privacy: .public)")
+                return CoreStartup(core: core, error: nil, warning: nil)
+            } catch {
+                failures.append("[\(name)] \(describe(error))")
+                coreLog.error("core start in \(name, privacy: .public) failed: \(describe(error), privacy: .public)")
+            }
+        }
+        // آخر حل: بالذاكرة
+        do {
+            let core = try QbCore.inMemory()
+            let detail = failures.joined(separator: "\n")
+            coreLog.error("core running in memory only: \(detail, privacy: .public)")
+            return CoreStartup(core: core, error: nil, warning: detail)
+        } catch {
+            failures.append("[memory] \(describe(error))")
+            let detail = failures.joined(separator: "\n")
+            coreLog.fault("core failed to start: \(detail, privacy: .public)")
+            NSLog("QB core failed to start: %@", detail)
+            return CoreStartup(core: nil, error: detail, warning: nil)
+        }
+    }
+
+    /// نص الخطأ الحقيقي كامل (للتشخيص، مو للمستخدم العادي)
+    static func describe(_ error: Error) -> String {
+        if let e = error as? CoreError {
+            switch e {
+            case .Network(let m): return "network: \(m)"
+            case .Addon(let m): return "addon: \(m)"
+            case .Storage(let m): return "storage: \(m)"
+            case .Cancelled: return "cancelled"
+            }
+        }
+        return String(describing: error)
     }
 
     /// يبدأ جمع المصادر ويرجّع الأحداث أول بأول. إلغاء الـ Task يلغي الطلب في Rust.

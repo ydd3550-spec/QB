@@ -6,11 +6,15 @@ import WidgetKit
 @Observable
 @MainActor
 final class AppModel {
-    let core: QbCore?
+    private(set) var core: QbCore?
     var tab: AppTab = .home
     var addons: [Manifest] = []
     var ready = false
     var startupError: String?
+    /// نص الخطأ الحقيقي من النواة (يطلع تحت رسالة الخطأ وينقدر ينسخ)
+    var startupDetail: String?
+    /// النواة اشتغلت بالذاكرة بس: هذا سبب فشل التخزين
+    var storageWarning: String?
 
     /// مسار التنقل لكل تبويب (عشان ضغطة التبويب ترجع للبداية)
     var paths: [AppTab: NavigationPath] = [.home: .init(), .discover: .init(), .library: .init(), .settings: .init(), .search: .init()]
@@ -51,7 +55,10 @@ final class AppModel {
     }
 
     init() {
-        core = CoreClient.make()
+        let startup = CoreClient.make()
+        core = startup.core
+        startupDetail = startup.error
+        storageWarning = startup.warning
         if let raw = core.flatMap({ try? $0.setting(key: "language") }) ?? nil, let lang = AppLanguage(rawValue: raw) {
             language = lang
         }
@@ -67,11 +74,26 @@ final class AppModel {
             return
         }
         guard !ready else { return }
+        startupError = nil
         let seeded = await core.seedDefaultAddons()
         await reloadAddons()
         if seeded > 0 { addonsVersion += 1 }
         ready = true
         refreshContinueWatching()
+    }
+
+    /// يعيد محاولة تشغيل النواة من شاشة الخطأ
+    func retryStartup() async {
+        guard core == nil else { return }
+        let startup = CoreClient.make()
+        startupDetail = startup.error
+        storageWarning = startup.warning
+        guard let c = startup.core else { return }
+        core = c
+        startupError = nil
+        loadSettings()
+        continueWatching = c.continueWatching()
+        await start()
     }
 
     func reloadAddons() async {

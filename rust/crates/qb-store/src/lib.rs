@@ -100,9 +100,33 @@ pub fn now() -> i64 {
 }
 
 impl Store {
+    /// يفتح القاعدة. لو فشل الفتح أو الـ migrations والملف موجود (ملف خربان أو WAL عالق)،
+    /// ينقله جنب باسم .broken ويبدأ قاعدة جديدة. الخطأ يرجع مع المسار والمرحلة.
     pub fn open(path: &str) -> Result<Store, CoreError> {
-        let conn = Connection::open(path).map_err(st)?;
-        Self::init(conn)
+        match Self::try_open(path) {
+            Ok(s) => Ok(s),
+            Err(first) => {
+                if !std::path::Path::new(path).exists() {
+                    return Err(CoreError::storage(format!("{first} [{path}]")));
+                }
+                let stamp = now();
+                for suffix in ["", "-wal", "-shm"] {
+                    let p = format!("{path}{suffix}");
+                    if std::path::Path::new(&p).exists() {
+                        let _ = std::fs::rename(&p, format!("{path}.broken-{stamp}{suffix}"));
+                    }
+                }
+                Self::try_open(path).map_err(|second| CoreError::storage(format!("{first} | after reset: {second} [{path}]")))
+            }
+        }
+    }
+
+    fn try_open(path: &str) -> Result<Store, String> {
+        use rusqlite::OpenFlags;
+        // بدون SQLITE_OPEN_URI: المسار ينقرا زي ما هو (فيه مسافات مثل "Application Support")
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(path, flags).map_err(|e| format!("open: {e}"))?;
+        Self::init(conn).map_err(|e| format!("init: {e}"))
     }
 
     pub fn open_in_memory() -> Result<Store, CoreError> {
@@ -111,9 +135,13 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Store, CoreError> {
         // WAL ما ينطبق على الذاكرة، وهذا عادي
-        let _ = conn.pragma_update(None, "journal_mode", "WAL");
-        conn.pragma_update(None, "synchronous", "NORMAL").map_err(st)?;
-        conn.busy_timeout(std::time::Duration::from_secs(3)).map_err(st)?;
+        // لو WAL ما اشتغل نرجع لـ DELETE (الافتراضي)، وما نوقف التشغيل عشانه
+        let wal: Result<String, _> = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0));
+        if !matches!(wal.as_deref(), Ok("wal") | Ok("memory")) {
+            let _ = conn.query_row("PRAGMA journal_mode=DELETE", [], |r| r.get::<_, String>(0));
+        }
+        let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(3));
         let s = Store { conn: Mutex::new(conn) };
         s.migrate()?;
         Ok(s)
@@ -533,6 +561,21 @@ mod tests {
             catalogs: vec![CatalogDef { id: "top".into(), kind: "movie".into(), name: "Top".into(), genres: vec!["A".into()], requires_extra: false, supports_search: true, supports_genre: true, supports_skip: true }],
             id_prefixes: vec!["tt".into()], configurable: false, transport_url: url.into(), enabled: true,
         }
+    }
+
+    #[test]
+    fn opens_path_with_spaces_and_recovers_from_garbage_file() {
+        let dir = std::env::temp_dir().join(format!("qb store test {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("qb.sqlite");
+        // ملف مو قاعدة بيانات
+        std::fs::write(&db, b"this is definitely not sqlite, just garbage bytes......................................................").unwrap();
+        let s = Store::open(db.to_str().unwrap()).expect("recovers");
+        s.set_setting("k", "v").unwrap();
+        drop(s);
+        let s = Store::open(db.to_str().unwrap()).unwrap();
+        assert_eq!(s.setting("k").unwrap().as_deref(), Some("v"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

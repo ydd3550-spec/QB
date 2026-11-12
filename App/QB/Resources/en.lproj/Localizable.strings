@@ -36,10 +36,12 @@
 "الترجمة والصوت" = "Subtitles & audio";
 "التشغيل" = "Playback";
 "التصدير يشمل المكتبة والتقدّم والسجل والإضافات. المسح ما يلمس مكتبتك" = "Export includes your library, progress, history and add-ons. Clearing doesn't touch your library";
+"التطبيق شغّال، بس ما قدر يحفظ على الجهاز، فاللي تسويه ما بينحفظ بعد ما تقفله. هذا نص الخطأ:" = "The app is running, but it couldn't save on this device, so nothing you do will be kept after you close it. Here's the error:";
 "التفاصيل والتشغيل" = "Details & playback";
 "التقدّم" = "Progress";
 "التلقائي يبدأ بالمشغّل الأصلي ويحوّل لـ VLC لو الملف ما اشتغل" = "Automatic starts with the native player and switches to VLC if the file won't play";
 "الجودة المفضلة" = "Preferred quality";
+"الحفظ متوقف مؤقتًا" = "Saving is paused";
 "الحلقات" = "Episodes";
 "الحلقة %@" = "Episode %@";
 "الحلقة الجاية" = "Next episode";
@@ -62,6 +64,7 @@
 "المظهر" = "Appearance";
 "الموسم %@" = "Season %@";
 "الموسم %@ · الحلقة %@" = "Season %@ · Episode %@";
+"انتسخ" = "Copied";
 "انثبتت %@" = "Installed %@";
 "انحذفت %@" = "Removed %@";
 "انحفظت المكتبة" = "Library saved";
@@ -92,6 +95,7 @@
 "تقرير الإضافات" = "Add-on report";
 "تلقائي" = "Automatic";
 "تم الإلغاء" = "Cancelled";
+"تمام" = "OK";
 "ثانية" = "seconds";
 "ثبّت إضافات مصادر من الإعدادات ← الإضافات" = "Install source add-ons from Settings → Add-ons";
 "ثبّت إضافة فيها كتالوجات من الإعدادات ← الإضافات" = "Install an add-on with catalogs from Settings → Add-ons";
@@ -169,5 +173,7 @@
 "نجمع المصادر…" = "Gathering sources…";
 "نحوّل لمشغّل VLC" = "Switching to VLC";
 "ندوّر أفضل مصدر…" = "Finding the best source…";
+"نسخ الخطأ" = "Copy error";
 "نسخ الرابط" = "Copy link";
+"نص الخطأ" = "Error details";
 "هذا شكل الترجمة" = "This is how subtitles look";

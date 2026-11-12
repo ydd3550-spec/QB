@@ -171,5 +171,11 @@
   "نحوّل لمشغّل VLC": "Switching to VLC",
   "ندوّر أفضل مصدر…": "Finding the best source…",
   "نسخ الرابط": "Copy link",
-  "هذا شكل الترجمة": "This is how subtitles look"
+  "هذا شكل الترجمة": "This is how subtitles look",
+  "الحفظ متوقف مؤقتًا": "Saving is paused",
+  "نسخ الخطأ": "Copy error",
+  "تمام": "OK",
+  "التطبيق شغّال، بس ما قدر يحفظ على الجهاز، فاللي تسويه ما بينحفظ بعد ما تقفله. هذا نص الخطأ:": "The app is running, but it couldn't save on this device, so nothing you do will be kept after you close it. Here's the error:",
+  "نص الخطأ": "Error details",
+  "انتسخ": "Copied"
 }

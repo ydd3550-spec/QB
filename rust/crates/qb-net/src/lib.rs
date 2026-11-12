@@ -6,6 +6,29 @@ use std::time::{Duration, Instant};
 
 pub const USER_AGENT: &str = "QB/1.0 (iOS; Stremio-compatible)";
 
+/// الخطأ مع كل أسبابه (reqwest يخبّي السبب الحقيقي داخل source)
+pub fn error_chain(e: &dyn std::error::Error) -> String {
+    let mut s = e.to_string();
+    let mut cur = e.source();
+    while let Some(c) = cur {
+        s.push_str(": ");
+        s.push_str(&c.to_string());
+        cur = c.source();
+    }
+    s
+}
+
+/// نص الـ panic لو كان نص
+pub fn panic_text(p: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = p.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = p.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -22,15 +45,37 @@ pub struct ProbeResponse {
 }
 
 impl Client {
+    /// يبني عميل HTTP. لو فشل الإعداد الكامل (مثلاً TLS على جهاز معيّن) يجرّب إعداد أبسط،
+    /// ولو فشل الاثنين يرجّع الخطأين كاملين عشان يبانون في شاشة الخطأ.
     pub fn new() -> Result<Self, CoreError> {
-        let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_secs(20))
-            .pool_idle_timeout(Duration::from_secs(60))
-            .build()
-            .map_err(CoreError::network)?;
-        Ok(Client { http, retries: 2 })
+        let full = std::panic::catch_unwind(|| {
+            reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .connect_timeout(Duration::from_secs(8))
+                .timeout(Duration::from_secs(20))
+                .pool_idle_timeout(Duration::from_secs(60))
+                .build()
+                .map_err(|e| error_chain(&e))
+        })
+        .unwrap_or_else(|p| Err(format!("panic: {}", panic_text(&*p))));
+        let first = match full {
+            Ok(http) => return Ok(Client { http, retries: 2 }),
+            Err(e) => e,
+        };
+        tracing::warn!("http client (full) failed: {first}; trying minimal");
+        let minimal = std::panic::catch_unwind(|| {
+            reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .http1_only()
+                .timeout(Duration::from_secs(20))
+                .build()
+                .map_err(|e| error_chain(&e))
+        })
+        .unwrap_or_else(|p| Err(format!("panic: {}", panic_text(&*p))));
+        match minimal {
+            Ok(http) => Ok(Client { http, retries: 2 }),
+            Err(second) => Err(CoreError::network(format!("http client: {first} | fallback: {second}"))),
+        }
     }
 
     /// GET يرجّع JSON، مع محاولتين إضافيتين بتأخير متزايد لأخطاء الشبكة والـ 5xx

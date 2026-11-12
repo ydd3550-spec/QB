@@ -27,6 +27,12 @@ pub struct DiscoverCatalog {
     pub catalog: CatalogDef,
 }
 
+/// يشغّل الدالة ويحوّل أي panic لخطأ
+fn guard<T>(f: impl FnOnce() -> Result<T, CoreError>) -> Result<T, CoreError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .unwrap_or_else(|p| Err(CoreError::storage(format!("panic while starting core: {}", qb_net::panic_text(&*p)))))
+}
+
 #[derive(Clone)]
 pub struct Core {
     inner: Arc<Inner>,
@@ -50,16 +56,21 @@ pub trait SourceEvents: Send + Sync {
 }
 
 impl Core {
+    /// يبدأ النواة. أي panic هنا ينقلب خطأ مفهوم بدل ما يطيح التطبيق، وكل خطأ يقول أي مرحلة فشلت.
     pub fn new(data_dir: &str) -> Result<Core, CoreError> {
-        let dir = PathBuf::from(data_dir);
-        std::fs::create_dir_all(&dir).map_err(CoreError::storage)?;
-        let store = Store::open(dir.join("qb.sqlite").to_str().unwrap_or("qb.sqlite"))?;
-        Self::with_parts(store, Cache::new(Some(dir.join("cache"))))
+        let data_dir = data_dir.to_string();
+        guard(move || {
+            let dir = PathBuf::from(&data_dir);
+            std::fs::create_dir_all(&dir).map_err(|e| CoreError::storage(format!("create dir {data_dir}: {e}")))?;
+            let db = dir.join("qb.sqlite");
+            let store = Store::open(&db.to_string_lossy())?;
+            Self::with_parts(store, Cache::new(Some(dir.join("cache"))))
+        })
     }
 
-    /// للاختبارات: كل شي بالذاكرة
+    /// كل شي بالذاكرة (للاختبارات، وآخر حل لو التخزين على الجهاز فشل)
     pub fn in_memory() -> Result<Core, CoreError> {
-        Self::with_parts(Store::open_in_memory()?, Cache::new(None))
+        guard(|| Self::with_parts(Store::open_in_memory()?, Cache::new(None)))
     }
 
     fn with_parts(store: Store, cache: Cache) -> Result<Core, CoreError> {
