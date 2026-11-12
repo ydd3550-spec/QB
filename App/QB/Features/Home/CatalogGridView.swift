@@ -66,7 +66,7 @@ struct PosterGrid: View {
                     PosterCard(item, width: nil)
                         .matchedTransitionSource(id: ref.zoomID, in: namespace)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bouncyCard)
                 .contextMenu { MediaContextMenu(ref: ref) } preview: { MediaPreviewCard(ref: ref) }
                 .onAppear {
                     if item.id == items.last?.id { onReachEnd() }

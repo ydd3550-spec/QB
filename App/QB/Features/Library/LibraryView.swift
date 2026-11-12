@@ -101,7 +101,7 @@ struct LibraryView: View {
                         PosterCard(name: item.title, poster: item.poster, width: nil)
                             .matchedTransitionSource(id: ref.zoomID, in: zoom)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bouncyCard)
                     .contextMenu {
                         Button(role: .destructive) {
                             withAnimation(Motion.standard) { _ = app.toggleLibrary(ref) }
@@ -130,12 +130,14 @@ struct LibraryView: View {
                                 PosterCard(name: h.title, poster: h.poster, width: 104)
                                     .matchedTransitionSource(id: ref.zoomID, in: zoom)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.bouncyCard)
                         }
                     }
                     .padding(.horizontal, 20)
                 }
                 .scrollIndicators(.hidden)
+                // الضغطة المطاطية تكبر البطاقة فوق حجمها شوي: لا تنقص من فوق أو تحت
+                .scrollClipDisabled()
             }
         }
     }

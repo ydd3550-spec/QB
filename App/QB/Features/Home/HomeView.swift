@@ -209,7 +209,7 @@ struct Shelf: View {
                             PosterCard(item)
                                 .matchedTransitionSource(id: ref.zoomID, in: namespace)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bouncyCard)
                         .contextMenu { MediaContextMenu(ref: ref) } preview: { MediaPreviewCard(ref: ref) }
                     }
                 }
@@ -217,6 +217,8 @@ struct Shelf: View {
                 .padding(.horizontal, 20)
             }
             .scrollIndicators(.hidden)
+            // الضغطة المطاطية تكبر البطاقة فوق حجمها شوي: لا تنقص من فوق أو تحت
+            .scrollClipDisabled()
             .scrollTargetBehavior(.viewAligned)
         }
     }
@@ -291,7 +293,7 @@ struct ContinueWatchingShelf: View {
                             ContinueCard(progress: p)
                                 .matchedTransitionSource(id: ref.zoomID, in: namespace)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bouncyCard)
                         .contextMenu {
                             Button(role: .destructive) {
                                 withAnimation(Motion.standard) { app.removeProgress(p.mediaId) }
@@ -305,6 +307,8 @@ struct ContinueWatchingShelf: View {
                 .padding(.horizontal, 20)
             }
             .scrollIndicators(.hidden)
+            // الضغطة المطاطية تكبر البطاقة فوق حجمها شوي: لا تنقص من فوق أو تحت
+            .scrollClipDisabled()
             .scrollTargetBehavior(.viewAligned)
         }
     }

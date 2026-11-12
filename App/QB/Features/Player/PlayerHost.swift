@@ -96,6 +96,7 @@ struct PlayerHost: View {
                 }
 
                 resumeHint
+                    .animation(Motion.pop, value: player.resumedFrom != nil && player.elapsed > 0)
 
                 zoomHint
 
@@ -285,7 +286,7 @@ struct PlayerHost: View {
         Haptics.tap()
         zoomPillTick += 1
         let token = zoomPillTick
-        withAnimation(.easeOut(duration: 0.18)) { zoomPill = fill }
+        withAnimation(Motion.pop) { zoomPill = fill }
         Task {
             try? await Task.sleep(for: .milliseconds(1400))
             guard zoomPillTick == token else { return }
@@ -563,7 +564,7 @@ struct PlayerHost: View {
             .glassEffect(Glass.player.interactive(), in: .capsule)
             .frame(maxHeight: .infinity, alignment: .top)
             .padding(.top, controlsVisible ? 70 : 24)
-            .transition(.opacity)
+            .transition(.asymmetric(insertion: .scale(scale: 0.86).combined(with: .opacity), removal: .opacity))
             .task(id: from) {
                 try? await Task.sleep(for: .seconds(6))
                 withAnimation(Motion.standard) { player.dismissResumeHint() }
@@ -588,7 +589,7 @@ struct PlayerHost: View {
             .frame(maxHeight: .infinity, alignment: .top)
             .padding(.top, (controlsVisible ? 70 : 24) + (resumeShown ? 44 : 0))
             .allowsHitTesting(false)
-            .transition(.opacity)
+            .transition(.asymmetric(insertion: .scale(scale: 0.86).combined(with: .opacity), removal: .opacity))
             .id(fill)
         }
     }
@@ -789,8 +790,8 @@ struct SubtitleOverlay: View {
 struct SoftPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.9 : 1)
-            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.86 : 1)
+            .animation(configuration.isPressed ? Motion.pressDown : Motion.pressRelease, value: configuration.isPressed)
     }
 }
 

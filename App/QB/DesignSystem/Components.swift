@@ -403,9 +403,10 @@ extension Glass {
 struct PrimaryPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            // نفس ضغطة الأنميشن المرجعية، أخف شوي لأن الزر عريض
+            .scaleEffect(configuration.isPressed ? 0.93 : 1)
             .brightness(configuration.isPressed ? -0.06 : 0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
+            .animation(configuration.isPressed ? Motion.pressDown : Motion.pressRelease, value: configuration.isPressed)
     }
 }
 

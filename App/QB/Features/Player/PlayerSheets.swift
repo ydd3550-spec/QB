@@ -201,7 +201,7 @@ struct SimilarSheet: View {
                         } label: {
                             PosterCard(item, width: nil)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bouncyCard)
                     }
                 }
                 .padding(16)

@@ -331,7 +331,7 @@ struct DetailsView: View {
                         EpisodeRow(video: v, fallbackImage: m.background ?? m.poster, current: progress?.episodeId == v.id,
                                    fraction: progress?.episodeId == v.id ? progress?.fraction : nil, locale: locale)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(BouncyPressStyle(depth: 0.96))
                 }
             }
             .padding(.horizontal, 20)
@@ -433,12 +433,14 @@ struct DetailsView: View {
                         NavigationLink(value: MediaRef(item, zoomID: "sim-\(ref.id)|\(item.id)")) {
                             PosterCard(item)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bouncyCard)
                     }
                 }
                 .padding(.horizontal, 20)
             }
             .scrollIndicators(.hidden)
+            // الضغطة المطاطية تكبر البطاقة فوق حجمها شوي: لا تنقص من فوق أو تحت
+            .scrollClipDisabled()
         }
     }
 
