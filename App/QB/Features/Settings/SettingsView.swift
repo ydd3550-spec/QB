@@ -127,6 +127,12 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    FeedbackRow()
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+
+                Section {
                     HStack {
                         QBLogo(size: 30)
                         Spacer()
@@ -214,6 +220,49 @@ struct SettingsView: View {
 }
 
 /// ملف JSON للتصدير
+/// صف «أرسل ملاحظاتك»: كبسولة داكنة وأيقونة طيارة ورق ذهبية، يفتح محادثة التلقرام الخاصة على طول
+struct FeedbackRow: View {
+    static let telegramUser = "l_jii"
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 12) {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Palette.accent)
+                    .frame(width: 34, height: 34)
+                    .background(Palette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.accent.opacity(0.25), lineWidth: 0.5))
+                Text(L("أرسل ملاحظاتك"))
+                    .font(Typo.bodyMedium)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 18)
+            .padding(.vertical, 9)
+            .background(Palette.surfaceRaised, in: Capsule())
+            .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 0.5))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L("أرسل ملاحظاتك"))
+    }
+
+    /// تطبيق التلقرام أول (يفتح الخاص مباشرة)، ولو مو مثبّت نفتح t.me
+    private func open() {
+        Haptics.tap()
+        let app = URL(string: "tg://resolve?domain=\(Self.telegramUser)")!
+        let web = URL(string: "https://t.me/\(Self.telegramUser)")!
+        UIApplication.shared.open(app, options: [:]) { ok in
+            if !ok { UIApplication.shared.open(web) }
+        }
+    }
+}
+
 struct JSONDocument: FileDocument {
     static let readableContentTypes: [UTType] = [.json]
     var text: String
