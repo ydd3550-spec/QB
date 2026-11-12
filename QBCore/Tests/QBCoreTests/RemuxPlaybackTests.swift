@@ -16,15 +16,54 @@ struct RemuxPlaybackTests {
 
     static func log(_ s: String) { print("REMUX-CHECK \(s)") }
 
+    init() { setenv("QB_REMUX_TRACE", "1", 1) }
+
     /// يشغّل الرابط لين يعدّي `seconds` من الفيديو، ويرجّع المشغّل والعنصر
+    /// يطبع اللي يشوفه أي عميل HTTP: القائمة الرئيسية، قائمة الفيديو، init وأول مقطع
+    static func probeHTTP(_ master: String) async {
+        let base = master.components(separatedBy: "/").dropLast().joined(separator: "/")
+        for path in [master, base + "/index.m3u8", base + "/init.mp4", base + "/0.m4s"] {
+            guard let u = URL(string: path) else { continue }
+            do {
+                let (data, resp) = try await URLSession.shared.data(from: u)
+                let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                let text = path.hasSuffix(".m3u8") ? String(decoding: data.prefix(700), as: UTF8.self).replacingOccurrences(of: "\n", with: " | ") : ""
+                log("http \(u.lastPathComponent) \(code) \(data.count)B \(text)")
+            } catch {
+                log("http \(u.lastPathComponent) ERROR \(error)")
+            }
+        }
+    }
+
+    /// محلّل HLS حق آبل بدون تشغيل: يقبل القائمة؟ وش المسارات؟
+    static func probeAsset(_ master: String) async {
+        guard let u = URL(string: master) else { return }
+        let asset = AVURLAsset(url: u)
+        do {
+            let (playable, duration) = try await asset.load(.isPlayable, .duration)
+            let tracks = try await asset.load(.tracks)
+            log("asset playable=\(playable) duration=\(duration.seconds) tracks=\(tracks.map { $0.mediaType.rawValue })")
+            if let g = try await asset.loadMediaSelectionGroup(for: .audible) { log("asset audible=\(g.options.map(\.displayName))") }
+            if let g = try await asset.loadMediaSelectionGroup(for: .legible) { log("asset legible=\(g.options.map(\.displayName))") }
+        } catch {
+            log("asset ERROR \(error)")
+        }
+    }
+
     static func play(_ urlString: String, from start: Double = 0, seconds: Double = 2.5) async throws -> (AVPlayer, AVPlayerItem) {
+        await probeHTTP(urlString)
+        await probeAsset(urlString)
         let item = AVPlayerItem(url: try #require(URL(string: urlString)))
         let player = AVPlayer(playerItem: item)
         player.automaticallyWaitsToMinimizeStalling = false
+        player.isMuted = true
+        player.play()
         var deadline = Date().addingTimeInterval(40)
         while item.status == .unknown, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
         let err = item.error.map { "\($0)" } ?? "-"
-        log("status=\(item.status.rawValue) error=\(err)")
+        let access = item.accessLog()?.events.map { "\($0.uri ?? "-") bytes=\($0.numberOfBytesTransferred)" } ?? []
+        let errors = item.errorLog()?.events.map { "\($0.errorStatusCode) \($0.errorDomain) \($0.errorComment ?? "")" } ?? []
+        log("status=\(item.status.rawValue) error=\(err) likely=\(item.isPlaybackLikelyToKeepUp) loaded=\(item.loadedTimeRanges.count) access=\(access) errors=\(errors) timeControl=\(player.timeControlStatus.rawValue) waiting=\(player.reasonForWaitingToPlay?.rawValue ?? "-")")
         try #require(item.status == .readyToPlay, "AVPlayer rejected it: \(err)")
         if start > 0 {
             await player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)

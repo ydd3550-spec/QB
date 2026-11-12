@@ -70,9 +70,10 @@ workflows:
       - name: Swift package tests (simulator)
         script: |
           if [ "$RUN_TESTS" = "1" ]; then
+            set -o pipefail
             cd QBCore
             SIM=$(xcrun simctl list devices available | grep -m1 -oE "iPhone [0-9]+[^(]*\(([0-9A-F-]+)\)" | grep -oE "[0-9A-F-]{36}")
-            xcodebuild test -scheme QBCore -destination "id=$SIM" CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../swift-tests.log | grep -E "Test (Suite|Case).*(passed|failed)|Executed|error:" | tail -40
+            xcodebuild test -scheme QBCore -destination "id=$SIM" CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../swift-tests.log | grep -E "REMUX-CHECK|qb-remux|passed after|failed after|recorded an issue|error:" | tail -80
           else
             echo "skipped (RUN_TESTS=$RUN_TESTS)"
           fi

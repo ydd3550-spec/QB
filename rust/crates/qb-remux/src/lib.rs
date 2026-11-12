@@ -1013,6 +1013,10 @@ async fn serve(mut sock: TcpStream, srv: Arc<Server>) -> std::io::Result<()> {
             resp.push_str(&format!("Content-Range: bytes {}-{}/{}\r\n", from, to - 1, total));
         }
         resp.push_str("\r\n");
+        if std::env::var_os("QB_REMUX_TRACE").is_some() {
+            let ua = head.lines().find(|l| l.to_ascii_lowercase().starts_with("user-agent:")).unwrap_or("").to_string();
+            eprintln!("qb-remux {method} {path} range={range:?} -> {code} {}B {ua}", to - from);
+        }
         sock.write_all(resp.as_bytes()).await?;
         if method != "HEAD" && to > from {
             sock.write_all(&body[from as usize..to as usize]).await?;
