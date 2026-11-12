@@ -234,6 +234,9 @@ final class VLCEngine: PlaybackEngine {
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.parkVideo() }
         })
+        observers.append(center.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resignedAt = Date() }
+        })
         observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.unparkVideo() }
         })
@@ -248,9 +251,22 @@ final class VLCEngine: PlaybackEngine {
         commands.async { box.value.currentVideoTrackIndex = -1 }
     }
 
+    /// The user's screen recording after coming back showed two pictures alternating every refresh (the old
+    /// video output's stale buffer and the live one) and then judder: VLC's video output on iOS doesn't survive
+    /// the app going inactive. So it is always rebuilt on return: from the parked track after the background,
+    /// or by restarting it after a longer inactive spell (screen lock, Control Center held open) without background.
+    private var resignedAt: Date?
+
     private func unparkVideo() {
         guard started, !shutDown else { return }
         AudioSessionKeeper.shared.activate()
+        let inactiveFor = resignedAt.map { Date().timeIntervalSince($0) } ?? 0
+        resignedAt = nil
+        if parkedVideoTrack == nil, inactiveFor > 1.5, !finished, player.currentVideoTrackIndex >= 0 {
+            restartVideoOutput()
+            picturesAt = Date()
+            return
+        }
         if let track = parkedVideoTrack {
             parkedVideoTrack = nil
             player.drawable = view
