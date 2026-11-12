@@ -184,7 +184,7 @@ struct DetailsView: View {
             if let r = meta?.imdbRating, !r.isEmpty { RatingBadge(rating: r) }
             if let y = meta?.releaseInfo, !y.isEmpty { Text(y) }
             if let rt = meta?.runtime, !rt.isEmpty { Text(rt) }
-            if let g = meta?.genres.prefix(2), !g.isEmpty { Text(g.joined(separator: " · ")).lineLimit(1) }
+            if let g = meta.map({ Self.uniqueGenres($0.genres).prefix(2) }), !g.isEmpty { Text(g.joined(separator: " · ")).lineLimit(1) }
         }
         .font(Typo.caption)
         .foregroundStyle(.secondary)
@@ -194,9 +194,10 @@ struct DetailsView: View {
         GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
                 PrimaryButton(title: playTitle, systemImage: startingPlay ? "hourglass" : "play.fill", expand: true) {
+                    // ما نعطّل الزر (التعطيل يبهّت النص)، بس ما يسوي شي لين تجهز البيانات
+                    guard meta != nil, !startingPlay else { return }
                     Task { await playMain() }
                 }
-                .disabled(meta == nil || startingPlay)
                 .sensoryFeedback(Haptics.light, trigger: startingPlay)
                 if let trailer = meta?.trailerYtIds.first {
                     GlassCircleButton(systemImage: "film.stack", size: 50, label: L("الإعلان")) {
@@ -278,7 +279,7 @@ struct DetailsView: View {
             if !m.genres.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        ForEach(m.genres, id: \.self) { g in
+                        ForEach(Self.uniqueGenres(m.genres), id: \.self) { g in
                             Text(g).font(Typo.caption)
                                 .padding(.horizontal, 12).frame(height: 30)
                                 .glassEffect(.regular, in: .capsule)
@@ -598,6 +599,19 @@ struct AddonReportSheet: View {
         VStack(spacing: 1) {
             Text("\(n)").font(Typo.headline).foregroundStyle(color).monospacedDigit()
             Text(label).font(Typo.badge).foregroundStyle(.secondary)
+        }
+    }
+}
+
+
+extension DetailsView {
+    /// التصنيفات بدون تكرار (بعض الإضافات ترسل نفس التصنيف مرتين)، بنفس الترتيب
+    static func uniqueGenres(_ genres: [String]) -> [String] {
+        var seen = Set<String>()
+        return genres.compactMap { g in
+            let t = g.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty, seen.insert(t.lowercased()).inserted else { return nil }
+            return t
         }
     }
 }

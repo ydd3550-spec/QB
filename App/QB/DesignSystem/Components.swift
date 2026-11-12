@@ -54,10 +54,16 @@ struct PrimaryButton: View {
                 .frame(width: width)
                 .frame(maxWidth: expand ? .infinity : nil)
                 .frame(height: expand ? ButtonMetrics.wideHeight : ButtonMetrics.height)
+                // ذهبي صريح عشان النص الغامق ينقرأ بوضوح، مع لمعة زجاجية فوق
+                .background {
+                    Capsule()
+                        .fill(LinearGradient(colors: [Palette.accent, Palette.accent.opacity(0.82)], startPoint: .top, endPoint: .bottom))
+                        .overlay(Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom), lineWidth: 0.8))
+                }
                 .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.tint(Palette.accent).interactive(), in: .capsule)
+        .buttonStyle(SoftPressStyle())
+        .shadow(color: Palette.accent.opacity(0.25), radius: 10, y: 4)
     }
 }
 

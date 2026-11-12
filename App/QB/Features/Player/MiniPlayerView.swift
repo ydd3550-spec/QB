@@ -15,9 +15,11 @@ struct MiniPlayerView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(player.context?.title ?? "").font(Typo.caption).lineLimit(1)
                 if placement != .inline, let sub = player.context?.subtitle {
-                    Text(sub).font(Typo.badge).foregroundStyle(.secondary).lineLimit(1)
+                    Text(sub).font(Typo.font(.medium, 10, .caption2)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
+            // بعيد عن خط التقدّم اللي تحت
+            .padding(.bottom, placement == .inline ? 0 : 5)
             Spacer(minLength: 4)
             Button {
                 player.togglePlay()
