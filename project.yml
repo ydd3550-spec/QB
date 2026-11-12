@@ -1,0 +1,84 @@
+name: QB
+options:
+  bundleIdPrefix: com.y
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: ar
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_STRICT_CONCURRENCY: minimal
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    LOCALIZATION_PREFERS_STRING_CATALOGS: NO
+    SWIFT_EMIT_LOC_STRINGS: NO
+
+packages:
+  QBCore:
+    path: QBCore
+
+targets:
+  QB:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/QB
+        excludes:
+          - "**/*.md"
+          - "Localization/en.json"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.y.qb
+        PRODUCT_NAME: QB
+        INFOPLIST_FILE: App/QB/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/QB/QB.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        OTHER_LDFLAGS: ["$(inherited)", "-lc++", "-lresolv"]
+    dependencies:
+      - package: QBCore
+      - target: QBWidget
+        embed: true
+        codeSign: false
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: WidgetKit.framework
+
+  QBWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: App/QBWidget
+      - path: App/QB/Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.y.qb.widget
+        PRODUCT_NAME: QBWidget
+        INFOPLIST_FILE: App/QBWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/QBWidget/QBWidget.entitlements
+        SKIP_INSTALL: YES
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+
+schemes:
+  QB:
+    build:
+      targets:
+        QB: all
+        QBWidget: all
+    run:
+      config: Debug
+    archive:
+      config: Release

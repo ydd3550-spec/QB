@@ -1,0 +1,82 @@
+workflows:
+  qb-unsigned-ipa:
+    name: QB unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      xcode: latest
+      cocoapods: default
+      vars:
+        RUN_TESTS: "0"
+        CARGO_TERM_COLOR: never
+        # البناء أسرع من fat LTO، والحجم قريب
+        CARGO_PROFILE_RELEASE_LTO: thin
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+        - $CM_BUILD_DIR/rust/target
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Install Rust + iOS targets
+        script: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          source "$HOME/.cargo/env" || true
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $CM_ENV
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          rustc --version && cargo --version
+          xcodebuild -version
+      - name: Rust tests
+        script: |
+          if [ "$RUN_TESTS" = "1" ]; then
+            cd rust && cargo test --locked --workspace 2>&1 | tee ../rust-tests.log
+            grep -E "^test result:" ../rust-tests.log || true
+          else
+            echo "skipped (RUN_TESTS=$RUN_TESTS)"
+          fi
+      - name: Build Rust core (XCFramework + Swift bindings)
+        script: |
+          if [ "$RUN_TESTS" = "1" ]; then export QB_TARGETS="aarch64-apple-ios aarch64-apple-ios-sim"; else export QB_TARGETS="aarch64-apple-ios"; fi
+          ./scripts/build-core.sh
+      - name: Generate project + pods
+        script: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          python3 scripts/gen-strings.py
+          xcodegen generate
+          pod install --repo-update
+      - name: Build unsigned app
+        script: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -workspace QB.xcworkspace -scheme QB -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
+            build 2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: unable|BUILD (SUCCEEDED|FAILED)|\*\* " || true
+          grep -q "BUILD SUCCEEDED" build/xcodebuild.log || { echo "---- errors ----"; grep -E "error:" build/xcodebuild.log | sort -u | head -200; exit 1; }
+      - name: Package IPA
+        script: |
+          APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "QB.app" | head -1)
+          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
+          mkdir -p build/ipa && zip -qry build/ipa/QB.ipa Payload
+          ls -la build/ipa
+          unzip -l build/ipa/QB.ipa | grep -E "QB.app/(QB|Info.plist)$|PlugIns/QBWidget.appex/QBWidget$|Frameworks/MobileVLCKit" || true
+      - name: Swift package tests (simulator)
+        script: |
+          if [ "$RUN_TESTS" = "1" ]; then
+            cd QBCore
+            SIM=$(xcrun simctl list devices available | grep -m1 -oE "iPhone [0-9]+[^(]*\(([0-9A-F-]+)\)" | grep -oE "[0-9A-F-]{36}")
+            xcodebuild test -scheme QBCore -destination "id=$SIM" CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../swift-tests.log | grep -E "Test (Suite|Case).*(passed|failed)|Executed|error:" | tail -40
+          else
+            echo "skipped (RUN_TESTS=$RUN_TESTS)"
+          fi
+    artifacts:
+      - build/ipa/QB.ipa
+      - build/xcodebuild.log
+      - rust-tests.log
+      - swift-tests.log

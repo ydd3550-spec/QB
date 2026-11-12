@@ -4,3 +4,8 @@ QBCore/Sources/QBCore/Generated/
 *.xcodeproj/
 Pods/
 .build/
+build/
+Payload/
+*.xcworkspace/
+Podfile.lock
+*.ipa

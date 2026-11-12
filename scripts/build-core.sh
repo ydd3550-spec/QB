@@ -9,7 +9,8 @@ OUT="$RUST/target/qbcore"
 LIB=libqb_ffi.a
 export IPHONEOS_DEPLOYMENT_TARGET=26.0
 
-TARGETS=(aarch64-apple-ios aarch64-apple-ios-sim)
+# QB_TARGETS يحدد الأهداف (الافتراضي الجوال والمحاكي)
+read -r -a TARGETS <<< "${QB_TARGETS:-aarch64-apple-ios aarch64-apple-ios-sim}"
 
 cd "$RUST"
 for t in "${TARGETS[@]}"; do
@@ -30,10 +31,9 @@ cat "$OUT"/swift/*.modulemap > "$OUT/headers/module.modulemap"
 rm "$OUT"/swift/*.modulemap
 
 echo "▸ xcodebuild -create-xcframework"
-rm -rf "$PKG/QBCoreFFI.xcframework"
-xcodebuild -create-xcframework \
-  -library "$RUST/target/aarch64-apple-ios/release/$LIB" -headers "$OUT/headers" \
-  -library "$RUST/target/aarch64-apple-ios-sim/release/$LIB" -headers "$OUT/headers" \
+XCF_ARGS=()
+for t in "${TARGETS[@]}"; do XCF_ARGS+=(-library "$RUST/target/$t/release/$LIB" -headers "$OUT/headers"); done
+xcodebuild -create-xcframework "${XCF_ARGS[@]}" \
   -output "$PKG/QBCoreFFI.xcframework"
 
 mkdir -p "$PKG/Sources/QBCore/Generated"
