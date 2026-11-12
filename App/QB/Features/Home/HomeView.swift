@@ -15,14 +15,24 @@ struct HomeView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 30) {
-                        Color.clear.frame(height: 0).id("top")
-                        if let hero = heroItem {
-                            HeroBanner(item: hero, namespace: zoom, pull: pull)
-                                .id(hero.id)
-                                .transition(.opacity)
-                        } else if loading || !app.ready {
-                            HeroPlaceholder()
-                                .transition(.opacity)
+                        // البانر يبدأ من أعلى الشاشة بالضبط (المسافة بين الرفوف ما تنحط فوقه)
+                        VStack(spacing: 0) {
+                            Color.clear.frame(height: 0).id("top")
+                            if let hero = heroItem {
+                                HeroBanner(item: hero, namespace: zoom, pull: max(pull, heroGap))
+                                    .id(hero.id)
+                                    // وقت التحديث المحتوى كله ينزل تحت دائرة التحديث: نقيس المسافة فوق البانر نفسه
+                                    // عشان الصورة تطول وتعبّيها، والدائرة تطلع فوق الصورة مو في شريط فاضي
+                                    .onGeometryChange(for: CGFloat.self) { g in
+                                        max(0, (g.frame(in: .scrollView(axis: .vertical)).minY * 2).rounded() / 2)
+                                    } action: { gap in
+                                        if gap != heroGap { heroGap = gap }
+                                    }
+                                    .transition(.opacity)
+                            } else if loading || !app.ready {
+                                HeroPlaceholder()
+                                    .transition(.opacity)
+                            }
                         }
 
                         if !app.continueWatching.isEmpty {
@@ -48,6 +58,7 @@ struct HomeView: View {
                     .padding(.bottom, 40)
                 }
                 .ignoresSafeArea(edges: (heroItem == nil && !loading && app.ready) ? [] : .top)
+                // نفس سحب صفحة التفاصيل بالضبط
                 .trackOverscroll($pull)
                 .onScrollGeometryChange(for: Bool.self) { geo in
                     geo.contentOffset.y + geo.contentInsets.top > 420
@@ -78,9 +89,10 @@ struct HomeView: View {
     }
 
     @State private var scrolledPastHero = false
+    @State private var pull: CGFloat = 0
+    @State private var heroGap: CGFloat = 0
 
     /// السحب لتحت فوق البانر: الصورة تتمطّط وتعبّي الفراغ
-    @State private var pull: CGFloat = 0
 
     /// آخر بانر محفوظ: يطلع أول ما يفتح التطبيق لين توصل الرفوف
     @State private var cachedHero: MetaPreview? = HeroCache.atLaunch
@@ -129,7 +141,8 @@ struct HeroBanner: View {
         let ref = MediaRef(item, zoomID: "hero-\(item.id)")
         NavigationLink(value: ref) {
             ZStack(alignment: .bottomLeading) {
-                // الصورة لين أعلى الشاشة (ورا شريط الحالة)، ولما تسحب لتحت تطول لفوق من تحت وتعبّي الفراغ
+                // نفس رأس صفحة التفاصيل: الصورة لين أعلى الشاشة (ورا شريط الحالة)، ولما تسحب لتحت
+                // (أو وقت التحديث) تطول لفوق من تحت وتعبّي المسافة كلها، فما يطلع فوقها فراغ
                 Color.clear
                     .frame(height: 540)
                     .overlay(alignment: .bottom) {
