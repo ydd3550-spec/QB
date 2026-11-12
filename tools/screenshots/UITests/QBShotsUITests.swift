@@ -197,7 +197,8 @@ final class Tour {
         open("qb://title/movie/ia:charlie_chaplin_film_fest?name=Charlie%20Chaplin%20Festival")
         pause(10)
         shot("15_details_archive"); labels("15_details_archive")
-        if tapBiggest("تشغيل") {
+        let row240 = first(app.buttons, "label CONTAINS %@ AND label CONTAINS %@", "240p", "شغّال")
+        if (row240.waitForExistence(timeout: 4) && row240.isHittable && tap(row240, "240p row")) || tapBiggest("تشغيل") {
             // وقت تشغيل الفيديو التطبيق ما يهدأ، فنصوّر بالشاشة بس ونضغط عن طريق springboard
             pause(10)
             shot("16_player_a")
@@ -219,11 +220,8 @@ final class Tour {
         app.terminate()
         pause(2)
         app.launch()
-        pause(15)
+        pause(45)
         shot("20_home_after_watch"); labels("20_home_after_watch")
-        swipeUp(1)
-        pause(2)
-        shot("21_home_continue"); labels("21_home_continue")
 
         // مكتبتي
         tab("مكتبتي", index: 2)
@@ -232,13 +230,19 @@ final class Tour {
 
         // سجل المشاهدة
         tab("الإعدادات", index: 3)
-        pause(1)
-        tab("الإعدادات", index: 3)
-        pause(1)
+        pause(2)
         if tap(first(app.buttons, "label BEGINSWITH %@", "سجل المشاهدة"), "history row") {
             pause(3)
             shot("23_history"); labels("23_history")
         }
+
+        tab("الرئيسية", index: 0)
+        pause(2)
+        tab("الرئيسية", index: 0)
+        pause(3)
+        swipeUp(1)
+        pause(2)
+        shot("21_home_continue"); labels("21_home_continue")
 
         widget()
     }
@@ -284,7 +288,7 @@ final class Tour {
         }
         pause(3)
         shot("zz_widget_preview"); labels("zz_widget_preview", springboard)
-        let add = first(springboard.buttons, "label IN %@", ["Add Widget", "إضافة أداة"])
+        let add = first(springboard.buttons, "label CONTAINS %@ OR label CONTAINS %@", "Add Widget", "إضافة أداة")
         if !tap(add, "add widget button", timeout: 4) {
             log(springboard.debugDescription)
             XCUIDevice.shared.press(.home)
