@@ -56,42 +56,52 @@ final class VLCSurfaceView: UIView {
         backgroundColor = .black
         isUserInteractionEnabled = false
         let center = NotificationCenter.default
-        for name in [UIApplication.didBecomeActiveNotification, UIApplication.willEnterForegroundNotification,
-                     UIApplication.protectedDataDidBecomeAvailableNotification] {
-            center.addObserver(self, selector: #selector(appCameBack), name: name, object: nil)
-        }
+        // Back from background / screen lock (not just Control Center, which doesn't touch the picture)
+        center.addObserver(self, selector: #selector(appCameBack), name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc private func appCameBack() { scheduleRelayout() }
+    @objc private func appCameBack() {
+        needsReapply = true
+        scheduleRelayout()
+    }
+
+    /// The aspect only gets re-sent to VLC when something really changed (size, back from background)
+    private var needsReapply = false
 
     override func layoutSubviews() {
         super.layoutSubviews()
         for sub in subviews where sub.frame != bounds { sub.frame = bounds }
         if bounds.size != lastSize {
             lastSize = bounds.size
+            needsReapply = true
             scheduleRelayout()
         }
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil { scheduleRelayout() }
+        if window != nil {
+            needsReapply = true
+            scheduleRelayout()
+        }
     }
 
     /// مرتين: أول ما يهدأ التدوير، ومرة بعد ما يرجع التطبيق نشط أكيد
     func scheduleRelayout() {
         pending.forEach { $0.cancel() }
         pending = [0.15, 0.6, 1.4].map { delay in
-            let work = DispatchWorkItem { [weak self] in self?.relayoutNow() }
+            let last = delay == 1.4
+            let work = DispatchWorkItem { [weak self] in self?.relayoutNow(reapply: last) }
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
             return work
         }
     }
 
-    private func relayoutNow() {
+    /// reapply: only the last pass re-sends the aspect to VLC (once per change, so playback doesn't hitch)
+    private func relayoutNow(reapply: Bool) {
         guard window != nil, UIApplication.shared.applicationState == .active else { return }
         // نجبر منظر VLC يعيد حساب مقاسه حتى لو الإطار نفسه: هذا اللي يرسل المقاس الجديد لـ VLC
         func touch(_ v: UIView) {
@@ -100,7 +110,10 @@ final class VLCSurfaceView: UIView {
             v.subviews.forEach(touch)
         }
         for sub in subviews { sub.frame = bounds; touch(sub) }
-        onRelayout?()
+        if reapply, needsReapply {
+            needsReapply = false
+            onRelayout?()
+        }
     }
 }
 
@@ -164,6 +177,7 @@ final class VLCEngine: PlaybackEngine {
     /// وقت آخر صورة انعرضت فعلًا (الترجمة ما تسبق صورة واقفة)
     private var frameTime: Double = 0
     private var recoveryStage = 0
+    private var recoveries = 0
     private var lastRecoveryAt = Date.distantPast
     /// طفينا مسار الصورة واحنا بالخلفية (مثل تطبيق VLC): نرجّعه أول ما نرجع
     private var parkedVideoTrack: Int32?
@@ -345,10 +359,13 @@ final class VLCEngine: PlaybackEngine {
             audioAt = now
         }
         // العدّاد ما يشتغل أبد (ما تغيّر ولا مرة) = ما نحكم عليه
-        let videoDead = everPictures && parkedVideoTrack == nil && now.timeIntervalSince(picturesAt) > 2
-        let audioDead = everAudio && player.currentAudioTrackIndex >= 0 && now.timeIntervalSince(audioAt) > 2.5
-        guard videoDead || audioDead, now.timeIntervalSince(lastRecoveryAt) > 3 else { return }
+        // VLC refreshes these counters about once a second, so the bar is well above that (no false alarms
+        // that would restart a healthy picture and cause stutter). At most 3 recoveries per load.
+        let videoDead = everPictures && parkedVideoTrack == nil && now.timeIntervalSince(picturesAt) > 3.5
+        let audioDead = everAudio && player.currentAudioTrackIndex >= 0 && now.timeIntervalSince(audioAt) > 3.5
+        guard videoDead || audioDead, recoveries < 3, now.timeIntervalSince(lastRecoveryAt) > 5 else { return }
         lastRecoveryAt = now
+        recoveries += 1
         recoveryStage += 1
         if recoveryStage == 1 {
             if videoDead { restartVideoOutput() }
@@ -363,7 +380,7 @@ final class VLCEngine: PlaybackEngine {
 
     /// الصورة واقفة والوقت يمشي
     private var pictureFrozen: Bool {
-        everPictures && parkedVideoTrack == nil && Date().timeIntervalSince(picturesAt) > 0.75
+        everPictures && parkedVideoTrack == nil && Date().timeIntervalSince(picturesAt) > 2.5
     }
 
     /// ملء الشاشة: VLC يقص الصورة على نسبة الشاشة نفسها، فتملّيها بدون ما تتمطّط
@@ -397,7 +414,7 @@ final class VLCEngine: PlaybackEngine {
         }
     }
 
-    func refreshLayout() { view.scheduleRelayout() }
+    func refreshLayout() { view.scheduleRelayout() }  // touches the views; the aspect is re-sent only if needed
 
     /// للترجمة: وقت VLC المبلّغ + اللي مر من بعده وهو شغّال (VLC يبلّغ الوقت بخطوات)
     var liveTime: Double {

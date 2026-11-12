@@ -81,9 +81,8 @@ final class NativeEngine: NSObject, PlaybackEngine {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 AudioSessionKeeper.shared.activate()
-                if self.view.playerLayer.player !== self.player || (self.everPlayed && !self.view.playerLayer.isReadyForDisplay) {
-                    self.reattachLayer()
-                }
+                // Only if it really got detached; a layer that is just warming up is left alone (the watchdog covers it)
+                if self.view.playerLayer.player !== self.player { self.reattachLayer() }
                 self.refreshLayout()
             }
         }
