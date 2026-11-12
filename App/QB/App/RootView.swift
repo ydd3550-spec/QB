@@ -61,5 +61,6 @@ private struct MiniPlayerAccessory: ViewModifier {
             content.tabViewBottomAccessory(isEnabled: visible) { MiniPlayerView() }
         } else {
             content.tabViewBottomAccessory { MiniPlayerView() }
+        }
     }
 }
