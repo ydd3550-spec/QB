@@ -3,8 +3,11 @@ import UIKit
 import QBCore
 
 /// آخر عمل بالبانر وصورته محفوظين على الجهاز: يطلعون أول ما يفتح التطبيق، قبل ما توصل الرفوف
-enum HeroCache {
+nonisolated enum HeroCache {
     static let pixel: CGFloat = 1400
+
+    /// يُقرأ من القرص مرة وحدة بس عند فتح التطبيق
+    static let atLaunch: MetaPreview? = loadAndWarm()
 
     private struct Stored: Codable {
         var id, kind, name: String
@@ -73,8 +76,10 @@ struct HeroImage: View {
 
     var body: some View {
         ZStack {
-            HeroShimmer()
-                .opacity(image == nil ? 1 : 0)
+            // اللمعة تنشال كليًا لما تطلع الصورة (ما تظل شغّالة بالخلفية)
+            if image == nil {
+                HeroShimmer().transition(.opacity)
+            }
             if let image {
                 Image(uiImage: image)
                     .resizable()

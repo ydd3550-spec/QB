@@ -73,7 +73,7 @@ struct HomeView: View {
     @State private var pull: CGFloat = 0
 
     /// آخر بانر محفوظ: يطلع أول ما يفتح التطبيق لين توصل الرفوف
-    @State private var cachedHero: MetaPreview? = HeroCache.loadAndWarm()
+    @State private var cachedHero: MetaPreview? = HeroCache.atLaunch
 
     /// أول عمل له خلفية عريضة من أول رف (أو المحفوظ لين توصل)
     private var heroItem: MetaPreview? {
@@ -224,11 +224,22 @@ struct MediaContextMenu: View {
         } label: {
             Label(saved ? L("شل من مكتبتي") : L("أضف لمكتبتي"), systemImage: saved ? "minus.circle" : "plus.circle")
         }
-        if let link = URL(string: "qb://title/\(ref.kind.wire)/\(ref.id)") {
+        if let link = shareURL {
             ShareLink(item: link, subject: Text(ref.name)) {
                 Label(L("مشاركة"), systemImage: "square.and.arrow.up")
             }
         }
+    }
+}
+
+extension MediaContextMenu {
+    fileprivate var shareURL: URL? {
+        var c = URLComponents()
+        c.scheme = "qb"
+        c.host = "title"
+        c.path = "/\(ref.kind.wire)/\(ref.id)"
+        c.queryItems = [URLQueryItem(name: "name", value: ref.name)]
+        return c.url
     }
 }
 

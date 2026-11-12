@@ -29,7 +29,7 @@ extension Notification.Name {
     static let qbPendingIntent = Notification.Name("qb.pendingIntent")
 }
 
-struct ResumeWatchingIntent: AppIntent {
+nonisolated struct ResumeWatchingIntent: AppIntent {
     static let title: LocalizedStringResource = "كمّل المشاهدة"
     static let description = IntentDescription("يفتح آخر شي كنت تشوفه في QB")
     static let openAppWhenRun = true
@@ -41,7 +41,7 @@ struct ResumeWatchingIntent: AppIntent {
     }
 }
 
-struct SearchQBIntent: AppIntent {
+nonisolated struct SearchQBIntent: AppIntent {
     static let title: LocalizedStringResource = "ابحث في QB"
     static let openAppWhenRun = true
 
@@ -52,7 +52,7 @@ struct SearchQBIntent: AppIntent {
     }
 }
 
-struct OpenLibraryIntent: AppIntent {
+nonisolated struct OpenLibraryIntent: AppIntent {
     static let title: LocalizedStringResource = "مكتبتي"
     static let openAppWhenRun = true
 
@@ -63,7 +63,7 @@ struct OpenLibraryIntent: AppIntent {
     }
 }
 
-struct QBShortcuts: AppShortcutsProvider {
+nonisolated struct QBShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: ResumeWatchingIntent(),
                     phrases: ["كمّل المشاهدة في \(.applicationName)", "Resume watching in \(.applicationName)"],
