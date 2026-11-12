@@ -88,11 +88,15 @@ struct SettingsView: View {
                         Text(L("هذا شكل الترجمة"))
                             .font(Typo.font(.semibold, 19 * app.subtitleSize, .title3))
                             .foregroundStyle(.white)
+                            // ظل مثل الترجمة بالمشغّل عشان تنقرا حتى على الزجاج الأبيض
+                            .shadow(color: .black.opacity(0.85), radius: 1.2, y: 0.5)
+                            .shadow(color: .black.opacity(0.45), radius: 5)
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(.black.opacity(app.subtitleBackground ? 0.6 : 0.0), in: RoundedRectangle(cornerRadius: 8))
+                            .animation(.smooth(duration: 0.25), value: app.subtitleBackground)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.gray.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+                            .padding(.vertical, 16)
+                            .background { LuminousGlass(cornerRadius: 16) }
                     }
                     Toggle(isOn: Binding(get: { app.subtitleBackground }, set: { app.subtitleBackground = $0; app.save("subtitle_background", $0 ? "1" : "0") })) {
                         row(L("خلفية للترجمة"), "rectangle.fill")
@@ -222,6 +226,42 @@ struct SettingsView: View {
 }
 
 /// ملف JSON للتصدير
+/// زجاج أبيض منوّر مثل أبل: زجاج بلمعة بيضاء، نور ناعم من فوق، وحافة مضيئة
+struct LuminousGlass: View {
+    var cornerRadius: CGFloat = 16
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .fill(.white.opacity(0.18))
+            .glassEffect(.regular.tint(.white.opacity(0.55)), in: shape)
+            // نور من فوق ينزل ويخف
+            .overlay(
+                shape.fill(
+                    LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.12), .white.opacity(0.0)],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+                .blendMode(.plusLighter)
+            )
+            // توهّج داخلي خفيف بالنص
+            .overlay(
+                shape.fill(
+                    RadialGradient(colors: [.white.opacity(0.35), .clear], center: .center, startRadius: 4, endRadius: 180)
+                )
+            )
+            // حافة مضيئة: أقوى فوق وتخف تحت
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.35), .white.opacity(0.6)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1
+                )
+            )
+            .shadow(color: .white.opacity(0.25), radius: 12)
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+    }
+}
+
 /// صف «أرسل ملاحظاتك»: كبسولة داكنة وأيقونة طيارة ورق ذهبية، يفتح محادثة التلقرام الخاصة على طول
 struct FeedbackRow: View {
     static let telegramUser = "l_jii"
