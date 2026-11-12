@@ -80,33 +80,7 @@ struct AddonsView: View {
                 .listRowInsets(EdgeInsets())
             }
 
-            Section {
-                ForEach(shown, id: \.transportUrl) { m in
-                    AddonRow(manifest: m) { enabled in
-                        toggle(m, enabled)
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) { pendingRemove = m } label: { Label(L("حذف"), systemImage: "trash") }
-                    }
-                    .contextMenu {
-                        if m.configurable, let cfg = configureURL(m) {
-                            Button { openURL(cfg) } label: { Label(L("إعدادات الإضافة"), systemImage: "slider.horizontal.3") }
-                        }
-                        Button {
-                            UIPasteboard.general.string = m.transportUrl
-                            app.showToast(L("اننسخ الرابط"))
-                        } label: { Label(L("نسخ الرابط"), systemImage: "doc.on.doc") }
-                        Button(role: .destructive) { pendingRemove = m } label: { Label(L("حذف"), systemImage: "trash") }
-                    }
-                }
-                .onMove(perform: filter == .all ? move : nil)
-            } header: {
-                Text(L("الإضافات المثبتة"))
-            } footer: {
-                if filter == .all, app.addons.count > 1 {
-                    Text(L("اضغط تعديل واسحب لترتيب الإضافات. الترتيب يحدد ترتيب الرفوف والمصادر"))
-                }
-            }
+            installedSection
         }
         .qbScreenBackground()
         .scrollContentBackground(.hidden)
@@ -140,6 +114,36 @@ struct AddonsView: View {
                 app.pendingAddonURL = nil
             }
         }
+    }
+
+    @ViewBuilder private var installedSection: some View {
+    Section {
+        ForEach(shown, id: \.transportUrl) { m in
+            AddonRow(manifest: m) { enabled in
+                toggle(m, enabled)
+            }
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) { pendingRemove = m } label: { Label(L("حذف"), systemImage: "trash") }
+            }
+            .contextMenu {
+                if m.configurable, let cfg = configureURL(m) {
+                    Button { openURL(cfg) } label: { Label(L("إعدادات الإضافة"), systemImage: "slider.horizontal.3") }
+                }
+                Button {
+                    UIPasteboard.general.string = m.transportUrl
+                    app.showToast(L("اننسخ الرابط"))
+                } label: { Label(L("نسخ الرابط"), systemImage: "doc.on.doc") }
+                Button(role: .destructive) { pendingRemove = m } label: { Label(L("حذف"), systemImage: "trash") }
+            }
+        }
+        .onMove(perform: filter == .all ? { from, to in move(from: from, to: to) } : nil)
+    } header: {
+        Text(L("الإضافات المثبتة"))
+    } footer: {
+        if filter == .all, app.addons.count > 1 {
+            Text(L("اضغط تعديل واسحب لترتيب الإضافات. الترتيب يحدد ترتيب الرفوف والمصادر"))
+        }
+    }
     }
 
     private func install() async {
