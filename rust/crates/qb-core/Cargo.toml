@@ -1,0 +1,20 @@
+[package]
+name = "qb-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qb-model = { workspace = true }
+qb-net = { workspace = true }
+qb-protocol = { workspace = true }
+qb-sources = { workspace = true }
+qb-subs = { workspace = true }
+qb-store = { workspace = true }
+qb-cache = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "qb-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+moka = { workspace = true }
+qb-model = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

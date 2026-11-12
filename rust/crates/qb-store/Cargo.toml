@@ -1,0 +1,13 @@
+[package]
+name = "qb-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qb-model = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

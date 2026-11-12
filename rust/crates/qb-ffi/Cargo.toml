@@ -1,0 +1,17 @@
+[package]
+name = "qb-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "qb_ffi"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[dependencies]
+uniffi = { workspace = true }
+qb-model = { workspace = true }
+qb-core = { workspace = true }
+qb-subs = { workspace = true }
+qb-protocol = { workspace = true }
+tokio = { workspace = true }

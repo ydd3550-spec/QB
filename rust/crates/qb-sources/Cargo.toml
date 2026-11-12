@@ -1,0 +1,15 @@
+[package]
+name = "qb-sources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+qb-model = { workspace = true }
+qb-net = { workspace = true }
+qb-protocol = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true }

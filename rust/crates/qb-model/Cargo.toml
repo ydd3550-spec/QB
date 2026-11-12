@@ -1,0 +1,13 @@
+[package]
+name = "qb-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "qb_model"
+
+[dependencies]
+uniffi = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }

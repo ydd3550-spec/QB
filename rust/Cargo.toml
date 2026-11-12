@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "uniffi-bindgen"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+uniffi     = { version = "0.32", features = ["tokio"] }
+tokio      = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "sync"] }
+reqwest    = { version = "0.13", default-features = false, features = ["native-tls", "http2", "json", "gzip", "brotli", "stream"] }
+rusqlite   = { version = "0.42", features = ["bundled"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror  = "2"
+moka       = { version = "0.12", features = ["future"] }
+tracing    = "0.1"
+proptest   = "1.12"   # dev-dependency
+
+qb-model    = { path = "crates/qb-model" }
+qb-net      = { path = "crates/qb-net" }
+qb-protocol = { path = "crates/qb-protocol" }
+qb-sources  = { path = "crates/qb-sources" }
+qb-subs     = { path = "crates/qb-subs" }
+qb-store    = { path = "crates/qb-store" }
+qb-cache    = { path = "crates/qb-cache" }
+qb-core     = { path = "crates/qb-core" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = 3
+# لا تحط panic = "abort": UniFFI يمسك الـ panic ويحوّله خطأ بدل ما يطيح التطبيق

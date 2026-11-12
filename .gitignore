@@ -1,0 +1,6 @@
+rust/target/
+QBCore/QBCoreFFI.xcframework/
+QBCore/Sources/QBCore/Generated/
+*.xcodeproj/
+Pods/
+.build/
