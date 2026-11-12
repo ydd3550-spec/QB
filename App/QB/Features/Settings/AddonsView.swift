@@ -112,7 +112,9 @@ struct AddonsView: View {
         .scrollContentBackground(.hidden)
         .navigationTitle(L("الإضافات"))
         .toolbar {
-            if filter == .all, app.addons.count > 1 { EditButton() }
+            ToolbarItem(placement: .topBarTrailing) {
+                if filter == .all, app.addons.count > 1 { EditButton() }
+            }
         }
         .overlay {
             if shown.isEmpty {

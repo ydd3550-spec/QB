@@ -24,9 +24,7 @@ struct RootView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory(isEnabled: model.player.showsMini) {
-            MiniPlayerView()
-        }
+        .modifier(MiniPlayerAccessory(visible: model.player.showsMini))
         .fullScreenCover(isPresented: $player.isPresented, onDismiss: { model.player.didDismiss() }) {
             PlayerHost()
                 .environment(model)
@@ -50,5 +48,18 @@ struct RootView: View {
             }
         }
         .background(Palette.background.ignoresSafeArea())
+    }
+}
+
+/// المشغّل المصغّر فوق التبويبات. iOS 26.1 يقدر يخفيه كامل لما ما فيه شي شغّال؛
+/// على 26.0 يبقى ظاهر (تغيير الشكل يعيد بناء التبويبات ويضيّع مكانك).
+private struct MiniPlayerAccessory: ViewModifier {
+    let visible: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.1, *) {
+            content.tabViewBottomAccessory(isEnabled: visible) { MiniPlayerView() }
+        } else {
+            content.tabViewBottomAccessory { MiniPlayerView() }
     }
 }

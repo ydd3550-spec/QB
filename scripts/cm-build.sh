@@ -99,6 +99,15 @@ if [ "$STATUS" = "finished" ]; then
   echo "$URL"
   exit 0
 fi
+# خطوات السكربت ما لها سجل في الـ API، فنقرا سجل xcodebuild من ملفات البناء
+ZIP_URL=$(awk -F'\t' '$1 ~ /artifacts\.zip$/ {print $2; exit}' "$OUT/artifacts.txt")
+if [ -n "$ZIP_URL" ]; then
+  curl -sSL -H "x-auth-token: $KEY" -o "$OUT/artifacts.zip" "$ZIP_URL" && rm -rf "$OUT/art" && unzip -q -o "$OUT/artifacts.zip" -d "$OUT/art" || true
+  for L in $(find "$OUT/art" -name "*.log" 2>/dev/null); do
+    echo "---- $(basename "$L") ----"
+    grep -E "error(\[E[0-9]+\])?:" "$L" | sed 's|/Users/builder/clone/||' | sort -u | head -150 || true
+  done
+fi
 echo "✖ البناء انتهى بحالة: $STATUS"
 echo "$URL"
 exit 1

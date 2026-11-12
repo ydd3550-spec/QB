@@ -2,6 +2,8 @@ import Foundation
 import QBCore
 
 typealias WatchProgress = QBCore.Progress
+/// SwiftUI فيها LibraryItem وLink، فنثبّت إن الأسماء هذي تعني أنواع النواة داخل التطبيق
+typealias LibraryItem = QBCore.LibraryItem
 
 /// تنسيقات بسيطة ما تعتمد على الواجهة (عليها اختبارات)
 nonisolated enum TimeFormat {

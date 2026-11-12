@@ -55,7 +55,7 @@ workflows:
           mkdir -p build
           xcodebuild -workspace QB.xcworkspace -scheme QB -configuration Release -sdk iphoneos \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build/DerivedData \
+            -derivedDataPath build/DerivedData -continue-building-after-errors \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
             build 2>&1 | tee build/xcodebuild.log | grep -E "error:|warning: unable|BUILD (SUCCEEDED|FAILED)|\*\* " || true
           grep -q "BUILD SUCCEEDED" build/xcodebuild.log || { echo "---- errors ----"; grep -E "error:" build/xcodebuild.log | sort -u | head -200; exit 1; }

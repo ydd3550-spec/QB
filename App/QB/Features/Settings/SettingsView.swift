@@ -41,7 +41,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section(L("التشغيل")) {
+                Section {
                     Picker(selection: Binding(get: { app.preferredQuality }, set: { app.preferredQuality = $0; app.save("preferred_quality", "\($0)") })) {
                         Text(L("الأعلى المتاح")).tag(0)
                         Text("4K").tag(2160)
@@ -65,6 +65,8 @@ struct SettingsView: View {
                     Stepper(value: Binding(get: { app.skipIntroSeconds }, set: { app.skipIntroSeconds = $0; app.save("skip_intro_seconds", "\($0)") }), in: 30...180, step: 5) {
                         row(L("تخطّي المقدمة"), "forward.fill", detail: L("%@ ثانية", "\(app.skipIntroSeconds)"))
                     }
+                } header: {
+                    Text(L("التشغيل"))
                 } footer: {
                     Text(L("التلقائي يبدأ بالمشغّل الأصلي ويحوّل لـ VLC لو الملف ما اشتغل"))
                 }
