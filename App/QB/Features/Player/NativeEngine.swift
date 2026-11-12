@@ -27,6 +27,9 @@ final class NativeEngine: NSObject, PlaybackEngine {
     private(set) var elapsed: Double = 0
     private(set) var duration: Double?
     private(set) var isBuffering = false
+    /// مدة العنصر "غير محدودة" بعد ما اشتغل فعلًا = بث مباشر
+    var isLive: Bool { everPlayed && player.currentItem?.duration.isIndefinite == true }
+    var videoSize: CGSize { player.currentItem?.presentationSize ?? .zero }
     var supportsPiP: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
     let supportsAirPlay = true
 

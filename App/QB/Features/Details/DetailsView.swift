@@ -75,7 +75,8 @@ struct DetailsView: View {
         .task { await load() }
         .onChange(of: app.libraryVersion) { _, _ in refreshLocalState() }
         .onChange(of: app.continueWatching.count) { _, _ in refreshLocalState() }
-        .onDisappear { sources.cancel() }
+        // المشغّل فوق الصفحة مو رجوع منها: نخلّي المصادر مثل ما هي
+        .onDisappear { if !app.player.isPresented { sources.cancel() } }
         .sheet(item: $episodeSheet) { video in
             EpisodeSourcesSheet(ref: currentRef, meta: meta, video: video)
                 .environment(app)
@@ -102,6 +103,11 @@ struct DetailsView: View {
     private func load() async {
         guard let core = app.core else { return }
         refreshLocalState()
+        // رجعت للصفحة (بعد المشغّل مثلًا): البيانات موجودة، لا نعيد تحميلها ولا نحرّكها من جديد
+        if let meta, meta.id == ref.id, !loading {
+            if !isSeries { sources.load(core: core, kind: meta.kind, id: meta.id) }
+            return
+        }
         loading = true
         error = nil
         do {

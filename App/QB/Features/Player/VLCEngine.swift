@@ -63,6 +63,8 @@ final class VLCEngine: PlaybackEngine {
     private(set) var elapsed: Double = 0
     private(set) var duration: Double?
     private(set) var isBuffering = false
+    private(set) var isLive = false
+    private(set) var videoSize: CGSize = .zero
     let supportsPiP = false
     let supportsAirPlay = false
 
@@ -156,6 +158,10 @@ final class VLCEngine: PlaybackEngine {
         } else if let remaining = player.remainingTime?.intValue, remaining < 0, t > 0 {
             duration = t + Double(-remaining) / 1000
         }
+        let vs = player.videoSize
+        if vs.width > 0, vs.height > 0, vs != videoSize { videoSize = vs }
+        // مباشر: اشتغل فعلًا، ما له مدة، وما يقبل التقديم
+        isLive = hasPlayed && duration == nil && !player.isSeekable && elapsed > 3
 
         if player.isPlaying {
             let moving = Date().timeIntervalSince(lastMove) < 1.5

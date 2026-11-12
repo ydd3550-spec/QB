@@ -4,6 +4,7 @@ import AVFoundation
 
 @main
 struct QBApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 

@@ -40,6 +40,10 @@ protocol PlaybackEngine: AnyObject {
     /// nil لو المدة مو معروفة (بث مباشر أو ملف بدون فهرس)
     var duration: Double? { get }
     var isBuffering: Bool { get }
+    /// بث مباشر فعلًا (مو بس مدة ما وصلت للحين)
+    var isLive: Bool { get }
+    /// مقاس صورة الفيديو، صفر لين يُعرف
+    var videoSize: CGSize { get }
     var supportsPiP: Bool { get }
     var supportsAirPlay: Bool { get }
 

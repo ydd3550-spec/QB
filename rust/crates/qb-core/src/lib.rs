@@ -193,7 +193,9 @@ impl Core {
     async fn fetch_catalog(&self, m: &Manifest, kind: &str, catalog_id: &str, extra: &[(String, String)]) -> Result<Vec<MetaPreview>, CoreError> {
         let url = qb_protocol::resource_url(&m.transport_url, "catalog", kind, catalog_id, extra);
         let v = self.cached_json(CacheKind::Catalog, &url).await?;
-        Ok(qb_protocol::parse_metas(&v, &m.name, MediaKind::parse(kind).unwrap_or(MediaKind::Movie)))
+        // بعض الإضافات ترجّع نفس العنوان مرتين بالصفحة؛ التكرار يلخبط القوائم بالواجهة
+        let metas = qb_protocol::parse_metas(&v, &m.name, MediaKind::parse(kind).unwrap_or(MediaKind::Movie));
+        Ok(flatten_unique(metas, None, usize::MAX))
     }
 
     /// رفوف الرئيسية: كل كتالوج ما يحتاج extra إجباري، بالتوازي، بترتيب الإضافات
@@ -231,7 +233,7 @@ impl Core {
                 }));
             }
             rows.sort_by_key(|(i, _)| *i);
-            Ok(rows.into_iter().map(|(_, r)| r).collect())
+            Ok(unique_rows(rows.into_iter().map(|(_, r)| r)))
         };
         self.cancellable(fut).await
     }
@@ -555,6 +557,14 @@ pub fn flatten_unique(items: impl IntoIterator<Item = MetaPreview>, exclude: Opt
         }
     }
     out
+}
+
+/// رف واحد لكل (إضافة، كتالوج، نوع): نفس المعرّف مرتين يكرر الرفوف بالواجهة
+pub fn unique_rows(rows: impl IntoIterator<Item = CatalogRow>) -> Vec<CatalogRow> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter(|r| seen.insert(format!("{}/{}/{:?}", r.addon_id, r.catalog_id, r.kind)))
+        .collect()
 }
 
 fn row_title(c: &CatalogDef) -> String {

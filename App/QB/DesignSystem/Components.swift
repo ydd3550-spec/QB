@@ -6,6 +6,8 @@ struct GlassCircleButton: View {
     let systemImage: String
     var size: CGFloat = 44
     var label: String = ""
+    /// زجاج شفاف أكثر (فوق الفيديو)
+    var clear = false
     let action: () -> Void
 
     var body: some View {
@@ -17,7 +19,7 @@ struct GlassCircleButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        .glassEffect((clear ? Glass.clear : Glass.regular).interactive(), in: .circle)
         .accessibilityLabel(label.isEmpty ? systemImage : label)
     }
 }

@@ -32,10 +32,20 @@ final class PlayerModel {
     weak var app: AppModel?
 
     // العرض
-    var isPresented = false
+    var isPresented = false {
+        didSet {
+            if isPresented, !oldValue {
+                coverOnScreen = true
+                OrientationLock.allowPlayerRotation()
+            }
+        }
+    }
+    /// شاشة المشغّل لسا على الشاشة (حتى وهي تنزل). المصغّر ما يطلع لين تختفي تمامًا،
+    /// عشان ما يتغيّر شكل التبويبات وقت حركة الإغلاق.
+    private(set) var coverOnScreen = false
     var miniHidden = false
     private(set) var pipActive = false
-    var showsMini: Bool { engine != nil && context != nil && !isPresented && !miniHidden && !pipActive }
+    var showsMini: Bool { engine != nil && context != nil && !isPresented && !coverOnScreen && !miniHidden && !pipActive }
 
     // التشغيل
     private(set) var engine: (any PlaybackEngine)?
@@ -45,6 +55,11 @@ final class PlayerModel {
     private(set) var elapsed: Double = 0
     private(set) var duration: Double?
     private(set) var isBuffering = false
+    /// بث مباشر فعلًا (حسب المشغّل)، مو بس مدة ما وصلت
+    private(set) var isLive = false
+    private(set) var videoSize: CGSize = .zero
+    /// آخر مصدر دوّرنا الشاشة له تلقائيًا، عشان ما نعاند المستخدم لو رجّعها عمودي
+    private var autoRotatedFor: String?
     private(set) var engineName = ""
     private(set) var errorMessage: String?
     private(set) var showTryAnother = false
@@ -132,6 +147,8 @@ final class PlayerModel {
         loadingSince = Date()
         elapsed = startAt
         duration = nil
+        isLive = false
+        videoSize = .zero
         audioTracks = []
         embeddedSubtitles = []
         selectedAudio = nil
@@ -320,9 +337,55 @@ final class PlayerModel {
     var supportsAirPlay: Bool { engine?.supportsAirPlay ?? false }
 
     /// يصغّر المشغّل (يكمل بالمشغّل المصغّر فوق التبويبات)
-    func minimize() {
+    /// تصغير: من زر السهم (بحركة) أو بعد السحب لتحت (الشاشة طالعة أصلًا، فبدون حركة ثانية)
+    func minimize(animated: Bool = true) {
         miniHidden = false
-        isPresented = false
+        dismissCover(animated: animated)
+    }
+
+    /// يرجّع الشاشة عمودي أول (لو كانت أفقي) وبعدين يقفل شاشة المشغّل
+    private func dismissCover(animated: Bool) {
+        guard isPresented else { return }
+        let rotating = OrientationLock.restorePortrait()
+        let apply: () -> Void = { [weak self] in
+            guard let self, self.isPresented else { return }
+            if animated {
+                self.isPresented = false
+            } else {
+                var t = Transaction()
+                t.disablesAnimations = true
+                withTransaction(t) { self.isPresented = false }
+            }
+        }
+        if rotating {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(420))
+                apply()
+            }
+        } else {
+            apply()
+        }
+    }
+
+    /// شاشة المشغّل ظهرت: ندوّر للأفقي لو الفيديو عرضي
+    func coverAppeared() {
+        coverOnScreen = true
+        autoRotatedFor = nil
+        autoRotateIfNeeded()
+    }
+
+    /// فيديو عرضي بجوال عمودي: ندوّر للأفقي مرة وحدة لكل مصدر
+    func autoRotateIfNeeded() {
+        guard isPresented, let key = source?.id ?? context?.streamId, autoRotatedFor != key else { return }
+        guard OrientationLock.isLandscapeVideo(videoSize) else { return }
+        autoRotatedFor = key
+        OrientationLock.rotate(toLandscape: true)
+    }
+
+    /// زر التدوير بالمشغّل
+    func toggleOrientation() {
+        autoRotatedFor = source?.id ?? context?.streamId
+        OrientationLock.rotate(toLandscape: !OrientationLock.isLandscapeNow)
     }
 
     func expand() {
@@ -354,11 +417,13 @@ final class PlayerModel {
         cueText = nil
         externalSubtitles = []
         selectedExternal = nil
-        isPresented = false
+        dismissCover(animated: true)
         app?.refreshContinueWatching()
     }
 
     func didDismiss() {
+        coverOnScreen = false
+        OrientationLock.lockPortrait()
         if case .failed = state { close() }
         if engine == nil, context != nil, state == .idle { close() }
     }
@@ -402,6 +467,8 @@ final class PlayerModel {
         guard let engine else { return }
         if elapsed != engine.elapsed { elapsed = engine.elapsed }
         if duration != engine.duration { duration = engine.duration }
+        if isLive != engine.isLive { isLive = engine.isLive }
+        if videoSize != engine.videoSize { videoSize = engine.videoSize }
         if isBuffering != engine.isBuffering { isBuffering = engine.isBuffering }
         if state != engine.state, engine.state != .idle { state = engine.state }
         updateCue()
@@ -497,6 +564,8 @@ final class PlayerModel {
         nextUp = nil
         elapsed = 0
         duration = nil
+        isLive = false
+        videoSize = .zero
         reportedOk = false
         triedSources = []
         state = .loading

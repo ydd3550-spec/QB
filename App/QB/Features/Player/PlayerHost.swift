@@ -10,6 +10,8 @@ struct PlayerHost: View {
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var dragOffset: CGFloat = 0
+    /// السحب لتحت خلص وقاعد نطلع: نوقف أي إيماءة ثانية لين تختفي الشاشة
+    @State private var leaving = false
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
@@ -65,15 +67,22 @@ struct PlayerHost: View {
             }
             .offset(y: dragOffset)
             .scaleEffect(1 - min(dragOffset / 1600, 0.12))
+            .allowsHitTesting(!leaving)
         }
+        // خلفية الشاشة شفافة: لما تسحب لتحت تشوف الصفحة اللي تحت مثل ما هي، وما تنعاد ولا تنبني من جديد
+        .presentationBackground(.clear)
         .statusBarHidden(!controlsVisible)
         .persistentSystemOverlays(controlsVisible ? .automatic : .hidden)
         .preferredColorScheme(.dark)
-        .onAppear { scheduleHide() }
+        .onAppear {
+            scheduleHide()
+            player.coverAppeared()
+        }
         .onChange(of: player.state) { _, s in
             if s == .paused || s == .ended { showControls(autoHide: false) }
             if s == .playing { scheduleHide() }
         }
+        .onChange(of: player.videoSize) { _, _ in player.autoRotateIfNeeded() }
         .sheet(item: $sheet) { which in
             Group {
                 switch which {
@@ -133,10 +142,18 @@ struct PlayerHost: View {
                             return
                         }
                         if dragAxis == .vertical {
-                            if v.translation.height > 140 || v.predictedEndTranslation.height > 360 {
-                                player.minimize()
+                            if PlayerLogic.swipeDismisses(translation: v.translation.height, predicted: v.predictedEndTranslation.height) {
+                                // نكمّل الحركة لتحت لين تطلع من الشاشة، وبعدين نشيلها بدون حركة ثانية.
+                                // قبل كانت ترجع لفوق وتنزل مرة ثانية مع حركة الإغلاق، فيبان كل شي يتكرر.
+                                leaving = true
+                                withAnimation(.easeOut(duration: 0.22)) { dragOffset = size.height + 120 }
+                                Task {
+                                    try? await Task.sleep(for: .milliseconds(240))
+                                    player.minimize(animated: false)
+                                }
+                            } else {
+                                withAnimation(Motion.snappy) { dragOffset = 0 }
                             }
-                            withAnimation(Motion.snappy) { dragOffset = 0 }
                         }
                     }
             )
@@ -222,43 +239,49 @@ struct PlayerHost: View {
             if player.supportsPiP {
                 GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة")) { touch { player.startPiP() } }
             }
+            GlassCircleButton(systemImage: "rotate.right", size: 42, label: L("تدوير الشاشة")) { touch { player.toggleOrientation() } }
             GlassCircleButton(systemImage: "xmark", size: 42, label: L("إغلاق")) { player.close() }
         }
     }
 
     private var transport: some View {
-        GlassEffectContainer(spacing: 28) {
-            HStack(spacing: 34) {
-                GlassCircleButton(systemImage: "gobackward.10", size: 56, label: L("رجوع 10 ثواني")) {
+        GlassEffectContainer(spacing: 24) {
+            HStack(spacing: 30) {
+                GlassCircleButton(systemImage: "gobackward.10", size: 46, label: L("رجوع 10 ثواني"), clear: true) {
                     touch { player.skip(-10) }
                 }
                 Button {
                     touch { player.togglePlay() }
                 } label: {
                     ZStack {
-                        if player.isBuffering && player.state != .paused {
-                            ProgressView().controlSize(.large).tint(.white)
+                        // مؤشر التحميل الوحيد بالشاشة يكون هنا داخل الزر
+                        if showsSpinner {
+                            ProgressView().controlSize(.regular).tint(.white)
                         } else {
                             Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 34, weight: .bold))
+                                .font(.system(size: 26, weight: .bold))
                                 .contentTransition(.symbolEffect(.replace))
                         }
                     }
                     .foregroundStyle(.white)
-                    .frame(width: 84, height: 84)
+                    .frame(width: 66, height: 66)
                     .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
+                .glassEffect(.clear.interactive(), in: .circle)
                 .accessibilityLabel(player.isPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
-                GlassCircleButton(systemImage: "goforward.10", size: 56, label: L("تقديم 10 ثواني")) {
+                GlassCircleButton(systemImage: "goforward.10", size: 46, label: L("تقديم 10 ثواني"), clear: true) {
                     touch { player.skip(10) }
                 }
             }
         }
         .environment(\.layoutDirection, .leftToRight)
         .foregroundStyle(.white)
-        .opacity(player.errorMessage == nil ? 1 : 0)
+        .opacity(player.errorMessage == nil ? 0.92 : 0)
+    }
+
+    private var showsSpinner: Bool {
+        player.state == .loading || (player.isBuffering && player.state != .paused)
     }
 
     private var showSkipIntro: Bool {
@@ -281,7 +304,7 @@ struct PlayerHost: View {
                     }
                 }
             }
-            Scrubber(elapsed: player.elapsed, duration: player.duration) { t in
+            Scrubber(elapsed: player.elapsed, duration: player.duration, live: player.isLive) { t in
                 player.seek(to: t)
                 scheduleHide()
             } onScrubbing: { scrubbing in
@@ -346,17 +369,23 @@ struct PlayerHost: View {
             .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .padding(24)
         } else if player.state == .loading || (player.isBuffering && player.elapsed < 1) {
-            VStack(spacing: 14) {
-                ProgressView().controlSize(.large).tint(.white)
-                Text(L("جاري التحميل…")).font(Typo.infoMedium).foregroundStyle(.white.opacity(0.85))
+            // مؤشر واحد بس: داخل زر التشغيل لما الأدوات ظاهرة، وبنفس مكانه لما تختفي
+            ZStack {
+                if !controlsVisible {
+                    ProgressView().controlSize(.large).tint(.white)
+                        .frame(width: 66, height: 66)
+                        .glassEffect(.clear, in: .circle)
+                        .transition(.opacity)
+                }
                 if player.showTryAnother, player.canTryAnother {
                     GlassButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath") { player.tryAnotherSource() }
                         .foregroundStyle(.white)
+                        .padding(.top, 150)
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 }
             }
             .animation(Motion.standard, value: player.showTryAnother)
-            .padding(.top, 150)
+            .animation(Motion.standard, value: controlsVisible)
             .allowsHitTesting(player.showTryAnother)
         }
     }
@@ -399,6 +428,8 @@ struct PlayerHost: View {
 struct Scrubber: View {
     let elapsed: Double
     let duration: Double?
+    /// بث مباشر فعلًا. لو المدة بس ما وصلت للحين (التحميل) نعرض --:--
+    var live = false
     let onSeek: (Double) -> Void
     var onScrubbing: (Bool) -> Void = { _ in }
 
@@ -442,11 +473,7 @@ struct Scrubber: View {
             HStack {
                 Text(TimeFormat.clock(shown))
                 Spacer()
-                if total > 0 {
-                    Text("-" + TimeFormat.clock(max(0, total - shown)))
-                } else {
-                    Text(L("مباشر"))
-                }
+                Text(Self.trailingLabel(elapsed: shown, duration: duration, live: live))
             }
             .font(Typo.time)
             .foregroundStyle(.white.opacity(0.8))
@@ -461,6 +488,17 @@ struct Scrubber: View {
             case .decrement: onSeek(max(0, elapsed - 10))
             @unknown default: break
             }
+        }
+    }
+}
+
+extension Scrubber {
+    /// النص اللي يمين الشريط: الباقي لو المدة معروفة، «مباشر» للبث المباشر بس، وغير كذا --:--
+    static func trailingLabel(elapsed: Double, duration: Double?, live: Bool) -> String {
+        switch PlayerLogic.trailingTime(elapsed: elapsed, duration: duration, live: live) {
+        case .remaining(let r): return "-" + TimeFormat.clock(r)
+        case .live: return L("مباشر")
+        case .unknown: return "--:--"
         }
     }
 }

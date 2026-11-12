@@ -118,6 +118,18 @@ fn flatten_unique_dedupes_and_excludes() {
     assert_eq!(out.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
 }
 
+#[test]
+fn unique_rows_drops_repeated_catalogs() {
+    let row = |addon: &str, cat: &str, kind: MediaKind| CatalogRow { addon_id: addon.into(), addon_name: addon.into(), catalog_id: cat.into(), kind, title: cat.into(), items: vec![] };
+    let out = unique_rows(vec![
+        row("a", "top", MediaKind::Movie),
+        row("a", "top", MediaKind::Series),
+        row("a", "top", MediaKind::Movie),
+        row("b", "top", MediaKind::Movie),
+    ]);
+    assert_eq!(out.len(), 3);
+}
+
 #[tokio::test]
 async fn events_get_finished_even_without_addons() {
     use std::sync::atomic::{AtomicBool, Ordering};
