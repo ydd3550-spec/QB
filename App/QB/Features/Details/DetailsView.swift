@@ -57,6 +57,8 @@ struct DetailsView: View {
                 }
             }
             .padding(.bottom, 40)
+            // The page is exactly the screen width: nothing wider (like the stretchy header) can push RTL content past the left edge
+            .containerRelativeFrame(.horizontal)
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(edges: .top)
@@ -89,10 +91,12 @@ struct DetailsView: View {
                 .presentationBackground(.regularMaterial)
         }
         .sheet(isPresented: $showReport) {
+            let fitted = AddonReportSheet.fittedHeight(count: report.count)
             AddonReportSheet(report: report)
                 .environment(\.layoutDirection, app.language.direction)
                 .environment(\.locale, app.language.locale)
-                .presentationDetents([.medium])
+                .presentationDetents(fitted > 620 ? [.height(620), .large] : [.height(fitted)])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -270,9 +274,12 @@ struct DetailsView: View {
             if let p = progress, let f = p.fraction, f > 0.01 {
                 HStack(spacing: 10) {
                     ProgressLine(fraction: f, height: 4)
+                        .frame(minWidth: 40, maxWidth: .infinity)
                         .environment(\.layoutDirection, .leftToRight)
                     if let left = TimeFormat.minutesLeft(position: p.positionS, duration: p.durationS) {
-                        Text(L("باقي %@ د", "\(left)")).font(Typo.caption).foregroundStyle(.secondary).fixedSize()
+                        // Never squeezed or clipped: the bar gives way, not the label
+                        Text(L("باقي %@ د", "\(left)")).font(Typo.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize().layoutPriority(1)
                     }
                 }
             }
@@ -570,36 +577,64 @@ struct EpisodeSourcesSheet: View {
     }
 }
 
-/// كم مصدر جابت كل إضافة وكم منها شغّال
+/// كم مصدر جابت كل إضافة وكم منها شغّال: بطاقة زجاجية لكل إضافة، والأرقام موزّعة بالتساوي على عرض البطاقة
 struct AddonReportSheet: View {
     let report: [AddonReport]
 
+    /// Sheet height that fits the cards (title bar + cards), capped so long lists scroll
+    static func fittedHeight(count: Int) -> CGFloat {
+        let bar: CGFloat = 64, card: CGFloat = 112, spacing: CGFloat = 12, bottom: CGFloat = 34
+        return bar + CGFloat(max(count, 1)) * card + CGFloat(max(count - 1, 0)) * spacing + bottom
+    }
+
     var body: some View {
         NavigationStack {
-            List(report, id: \.addon) { r in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(r.addon).font(Typo.headline)
-                    HStack(spacing: 14) {
-                        stat(L("المصادر"), r.total)
-                        stat(L("شغّال"), r.alive, color: Palette.live)
-                        stat(L("أصلي"), r.native)
-                        stat("VLC", r.vlc)
-                        if r.other > 0 { stat(L("غيرها"), r.other) }
-                    }
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(report, id: \.addon) { r in card(r) }
                 }
-                .padding(.vertical, 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 16)
             }
-            .scrollContentBackground(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
             .navigationTitle(L("تقرير الإضافات"))
             .navigationBarTitleDisplayMode(.inline)
         }
     }
 
-    private func stat(_ label: String, _ n: UInt32, color: Color = .primary) -> some View {
-        VStack(spacing: 1) {
-            Text("\(n)").font(Typo.headline).foregroundStyle(color).monospacedDigit()
-            Text(label).font(Typo.badge).foregroundStyle(.secondary)
+    private func card(_ r: AddonReport) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(r.addon).font(Typo.headline).lineLimit(1)
+            // Five equal columns across the full width, always the same five (zero is dimmed, never hidden)
+            HStack(spacing: 0) {
+                stat(L("المصادر"), r.total)
+                divider
+                stat(L("شغّال"), r.alive, color: Palette.live)
+                divider
+                stat(L("أصلي"), r.native)
+                divider
+                stat("VLC", r.vlc)
+                divider
+                stat(L("غيرها"), r.other)
+            }
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    }
+
+    private var divider: some View {
+        Rectangle().fill(.white.opacity(0.12)).frame(width: 1, height: 28)
+    }
+
+    private func stat(_ label: String, _ n: UInt32, color: Color = .primary) -> some View {
+        VStack(spacing: 2) {
+            Text("\(n)").font(Typo.headline).foregroundStyle(color).monospacedDigit()
+            Text(label).font(Typo.badge).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+        }
+        .frame(maxWidth: .infinity)
+        .opacity(n == 0 ? 0.45 : 1)
     }
 }
 
