@@ -64,6 +64,37 @@ public enum PlayerLogic {
         translation > 140 || predicted > 360
     }
 
+    /// مستطيل الفيديو المعروض داخل الشاشة: الحجم الأصلي مثل AVMakeRect، وملء الشاشة يغطيها (ويطلع براها).
+    /// nil لو مقاس الفيديو ما انعرف للحين
+    public static func videoRect(video: CGSize, in screen: CGSize, fill: Bool) -> CGRect? {
+        guard video.width > 0, video.height > 0, screen.width > 0, screen.height > 0 else { return nil }
+        let sx = screen.width / video.width, sy = screen.height / video.height
+        let s = fill ? max(sx, sy) : min(sx, sy)
+        let w = video.width * s, h = video.height * s
+        return CGRect(x: (screen.width - w) / 2, y: (screen.height - h) / 2, width: w, height: h)
+    }
+
+    /// مكان الترجمة: المسافة من أسفل الشاشة (مع الحافة الآمنة) وتصغير الخط للفيديو الصغير
+    public struct SubtitlePlacement: Equatable, Sendable {
+        public let bottom: CGFloat
+        public let scale: CGFloat
+    }
+
+    /// الترجمة داخل أسفل الصورة نفسها (مو أسفل الشاشة): بالطول تطلع تحت الفيديو اللي بالنص،
+    /// وبالعرض أو بعد التكبير تظل فوق حافة الشاشة وفوق الأدوات لو ظاهرة.
+    public static func subtitlePlacement(screen: CGSize, video: CGSize, fill: Bool, safeBottom: CGFloat, controlsVisible: Bool) -> SubtitlePlacement {
+        let floor = safeBottom + (controlsVisible ? 128 : 34)
+        guard let rect = videoRect(video: video, in: screen, fill: fill) else {
+            return SubtitlePlacement(bottom: floor, scale: 1)
+        }
+        let visibleBottom = min(rect.maxY, screen.height)
+        let visibleHeight = visibleBottom - max(rect.minY, 0)
+        let gap = max(0, screen.height - visibleBottom)
+        let inner = max(10, visibleHeight * 0.06)
+        let scale = min(1, max(0.8, visibleHeight / 360))
+        return SubtitlePlacement(bottom: max(gap + inner, floor), scale: scale)
+    }
+
     /// القرص بالإصبعين خلص: true ملء الشاشة، false الحجم الأصلي، nil ما يتغيّر شي
     /// (حركة صغيرة، أو نفس الوضع الحالي)
     public static func pinchZoomDecision(magnification: CGFloat, filled: Bool) -> Bool? {

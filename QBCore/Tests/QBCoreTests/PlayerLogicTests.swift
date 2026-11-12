@@ -73,6 +73,28 @@ struct PlayerLogicTests {
         #expect(!PlayerLogic.swipeDismisses(translation: 60, predicted: 120))
     }
 
+    @Test func subtitlesFollowPicture() {
+        // بالطول: فيديو 16:9 بالنص، الترجمة داخل أسفل الصورة مو أسفل الشاشة
+        let portrait = CGSize(width: 402, height: 874)
+        let video = CGSize(width: 1920, height: 1080)
+        let rect = PlayerLogic.videoRect(video: video, in: portrait, fill: false)!
+        #expect(abs(rect.width - 402) < 0.5)
+        let p = PlayerLogic.subtitlePlacement(screen: portrait, video: video, fill: false, safeBottom: 34, controlsVisible: false)
+        let gap = portrait.height - rect.maxY
+        #expect(p.bottom > gap)
+        #expect(p.bottom < gap + 40)
+        // الأدوات ظاهرة: نفس المكان (الصورة أصلًا فوقها)
+        #expect(PlayerLogic.subtitlePlacement(screen: portrait, video: video, fill: false, safeBottom: 34, controlsVisible: true) == p)
+        // بالعرض: نفس المكان القديم (34 فوق الحافة الآمنة)، وفوق الأدوات لما تطلع
+        let landscape = CGSize(width: 874, height: 402)
+        #expect(PlayerLogic.subtitlePlacement(screen: landscape, video: video, fill: false, safeBottom: 21, controlsVisible: false).bottom == 55)
+        #expect(PlayerLogic.subtitlePlacement(screen: landscape, video: video, fill: false, safeBottom: 21, controlsVisible: true).bottom == 149)
+        // ملء الشاشة بالطول: الصورة تغطي الشاشة، فالترجمة ترجع فوق الحافة
+        #expect(PlayerLogic.subtitlePlacement(screen: portrait, video: video, fill: true, safeBottom: 34, controlsVisible: false).bottom == 68)
+        // المقاس ما انعرف: أسفل الشاشة مثل قبل
+        #expect(PlayerLogic.subtitlePlacement(screen: portrait, video: .zero, fill: false, safeBottom: 34, controlsVisible: false).bottom == 68)
+    }
+
     @Test func pinchZoom() {
         // تفتح أصابعك: ملء الشاشة، تضمّها: الحجم الأصلي
         #expect(PlayerLogic.pinchZoomDecision(magnification: 1.3, filled: false) == true)

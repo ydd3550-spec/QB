@@ -64,9 +64,16 @@ struct PlayerHost: View {
 
                 gestureLayer(size: geo.size)
 
-                SubtitleOverlay(text: player.cueText, scale: app.subtitleSize, background: app.subtitleBackground)
-                    .padding(.bottom, controlsVisible ? 128 : 34)
-                    .animation(Motion.standard, value: controlsVisible)
+                // الترجمة تلحق الصورة نفسها: بالطول تحت الفيديو اللي بالنص، وبالعرض أو بعد التكبير فوق حافة الشاشة
+                let subs = PlayerLogic.subtitlePlacement(
+                    screen: screen, video: player.videoSize, fill: player.videoFill,
+                    safeBottom: geo.safeAreaInsets.bottom, controlsVisible: controlsVisible)
+                SubtitleOverlay(text: player.cueText, scale: app.subtitleSize * Double(subs.scale), background: app.subtitleBackground)
+                    .padding(.horizontal, max(geo.safeAreaInsets.leading, geo.safeAreaInsets.trailing))
+                    .padding(.bottom, subs.bottom)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+                    .animation(Motion.standard, value: subs)
                     .allowsHitTesting(false)
 
                 if let ripple {
