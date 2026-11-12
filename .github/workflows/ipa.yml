@@ -7,7 +7,7 @@ on:
 
 jobs:
   ipa:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: never
