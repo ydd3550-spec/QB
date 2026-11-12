@@ -135,9 +135,19 @@ private struct BehindPlayerEffect: ViewModifier {
         content
             .visualEffect { c, _ in c.scaleEffect(scale) }
             .overlay {
-                Color.black.opacity(0.4 * (1 - p))
+                GeometryReader { g in
+                    // بالعرض الصفحة اللي ورا مرتّبة للطول أصلًا، فنغطيها بزجاج مموّه بدل ما تبان أزرارها مقصوصة تحت البطاقة
+                    let landscape = g.size.width > g.size.height
+                    ZStack {
+                        if landscape, p < 1 {
+                            Rectangle().fill(.regularMaterial).opacity(1 - p)
+                        }
+                        Color.black.opacity((landscape ? 0.5 : 0.4) * (1 - p))
+                    }
                     .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             }
             .animation(Motion.soft, value: player.isPresented)
     }

@@ -128,6 +128,16 @@ struct PlayerHost: View {
                 RoundedRectangle(cornerRadius: dismiss.cornerRadius, style: .continuous)
                     .ignoresSafeArea()
             }
+            // ظل ناعم تحت البطاقة وقت السحب بس (شكل ثابت، ما يكلّف شي على الفيديو)
+            .background {
+                if dragOffset > 0 {
+                    RoundedRectangle(cornerRadius: dismiss.cornerRadius, style: .continuous)
+                        .fill(.black)
+                        .shadow(color: .black.opacity(0.45 * dismiss.controlsOpacityInverse), radius: 28, y: 12)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
+            }
             .visualEffect { content, _ in
                 content
                     .scaleEffect(dismiss.scale, anchor: .center)
@@ -982,6 +992,9 @@ struct DismissCard {
 
     /// الأزرار تختفي خلال أول 70 نقطة
     var controlsOpacity: Double { Double(1 - min(max(offset, 0) / 70, 1)) }
+
+    /// الظل يطلع بنفس سرعة اختفاء الأزرار
+    var controlsOpacityInverse: Double { 1 - controlsOpacity }
 
     /// مسافة كافية تطلّع البطاقة من الشاشة حتى لو لفّت الشاشة بعدها
     static func offscreen(_ size: CGSize) -> CGFloat { max(size.width, size.height) + 160 }
