@@ -129,7 +129,13 @@ struct SectionHeader: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(Typo.section).lineLimit(1)
+                HStack(spacing: 8) {
+                    // خط ذهبي صغير قبل العنوان
+                    Capsule()
+                        .fill(LinearGradient(colors: [Palette.accent, Palette.accent.opacity(0.45)], startPoint: .top, endPoint: .bottom))
+                        .frame(width: 3, height: 16)
+                    Text(title).font(Typo.section).lineLimit(1)
+                }
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle).font(Typo.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -139,12 +145,16 @@ struct SectionHeader: View {
                 Button(action: action) {
                     HStack(spacing: 3) {
                         Text(L("الكل"))
-                        Image(systemName: "chevron.forward").font(.caption.weight(.bold))
+                        Image(systemName: "chevron.forward").font(.system(size: 10, weight: .bold))
                     }
-                    .font(Typo.infoMedium)
+                    .font(Typo.caption)
                     .foregroundStyle(Palette.accent)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
         }
         .padding(.horizontal, 20)
@@ -334,6 +344,15 @@ struct ToastHost: View {
 extension View {
     /// خلفية الشاشات الموحّدة
     func qbScreenBackground() -> some View {
-        background(Palette.background.ignoresSafeArea())
+        background {
+            ZStack(alignment: .top) {
+                Palette.background
+                // توهّج ذهبي خفيف جدًا فوق يعطي عمق
+                RadialGradient(colors: [Palette.accent.opacity(0.10), .clear], center: .top, startRadius: 0, endRadius: 420)
+                    .frame(height: 420)
+                    .allowsHitTesting(false)
+            }
+            .ignoresSafeArea()
+        }
     }
 }
