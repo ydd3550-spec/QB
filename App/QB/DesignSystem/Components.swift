@@ -19,7 +19,7 @@ struct GlassCircleButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .glassEffect((clear ? Glass.clear : Glass.regular).interactive(), in: .circle)
+        .glassEffect((clear ? Glass.player : Glass.regular).interactive(), in: .circle)
         .accessibilityLabel(label.isEmpty ? systemImage : label)
     }
 }
@@ -375,4 +375,10 @@ struct OverscrollReader: ViewModifier {
 
 extension View {
     func trackOverscroll(_ pull: Binding<CGFloat>) -> some View { modifier(OverscrollReader(pull: pull)) }
+}
+
+
+extension Glass {
+    /// زجاج أبل الشفاف فوق الفيديو، مع لمسة غامقة خفيفة عشان الأيقونات تنقرأ على المشاهد الفاتحة
+    static var player: Glass { .clear.tint(.black.opacity(0.14)) }
 }

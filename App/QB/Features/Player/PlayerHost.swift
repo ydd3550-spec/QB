@@ -65,7 +65,7 @@ struct PlayerHost: View {
                         .font(Typo.time)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 16).padding(.vertical, 10)
-                        .glassEffect(.regular, in: .capsule)
+                        .glassEffect(Glass.player, in: .capsule)
                         .allowsHitTesting(false)
                 }
 
@@ -259,7 +259,7 @@ struct PlayerHost: View {
 
     private var topBar: some View {
         HStack(spacing: 12) {
-            GlassCircleButton(systemImage: "chevron.down", size: 42, label: L("تصغير")) { player.minimize() }
+            GlassCircleButton(systemImage: "chevron.down", size: 42, label: L("تصغير"), clear: true) { player.minimize() }
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.context?.title ?? "").font(Typo.headline).lineLimit(1)
                 if let sub = player.context?.subtitle {
@@ -271,14 +271,14 @@ struct PlayerHost: View {
             if player.supportsAirPlay {
                 AirPlayButton()
                     .frame(width: 42, height: 42)
-                    .glassEffect(.regular.interactive(), in: .circle)
+                    .glassEffect(Glass.player.interactive(), in: .circle)
                     .accessibilityLabel(L("AirPlay"))
             }
             if player.supportsPiP {
-                GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة")) { touch { player.startPiP() } }
+                GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة"), clear: true) { touch { player.startPiP() } }
             }
-            GlassCircleButton(systemImage: "rotate.right", size: 42, label: L("تدوير الشاشة")) { touch { player.toggleOrientation() } }
-            GlassCircleButton(systemImage: "xmark", size: 42, label: L("إغلاق")) { player.close() }
+            GlassCircleButton(systemImage: "rotate.right", size: 42, label: L("تدوير الشاشة"), clear: true) { touch { player.toggleOrientation() } }
+            GlassCircleButton(systemImage: "xmark", size: 42, label: L("إغلاق"), clear: true) { player.close() }
         }
     }
 
@@ -315,7 +315,7 @@ struct PlayerHost: View {
             .contentShape(Circle())
         }
         .buttonStyle(SoftPressStyle())
-        .glassEffect(.clear.interactive(), in: .circle)
+        .glassEffect(Glass.player.interactive(), in: .circle)
         .accessibilityLabel(shownPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
         .accessibilityAction(named: L("رجوع 10 ثواني")) { player.skip(-10) }
         .accessibilityAction(named: L("تقديم 10 ثواني")) { player.skip(10) }
@@ -389,7 +389,7 @@ struct PlayerHost: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffect(Glass.player.interactive(), in: .capsule)
     }
 
     // MARK: - التحميل والخطأ
@@ -419,7 +419,7 @@ struct PlayerHost: View {
                 if !controlsVisible {
                     ProgressView().controlSize(.small).tint(.white)
                         .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
-                        .glassEffect(.clear, in: .circle)
+                        .glassEffect(Glass.player, in: .circle)
                         .transition(.opacity)
                 }
                 if player.showTryAnother, player.canTryAnother {
