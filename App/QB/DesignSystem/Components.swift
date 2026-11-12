@@ -62,7 +62,7 @@ struct PrimaryButton: View {
                 }
                 .contentShape(Capsule())
         }
-        .buttonStyle(SoftPressStyle())
+        .buttonStyle(PrimaryPressStyle())
         .shadow(color: Palette.accent.opacity(0.25), radius: 10, y: 4)
     }
 }
@@ -387,4 +387,15 @@ extension View {
 extension Glass {
     /// زجاج أبل الشفاف فوق الفيديو، مع لمسة غامقة خفيفة عشان الأيقونات تنقرأ على المشاهد الفاتحة
     static var player: Glass { .clear.tint(.black.opacity(0.14)) }
+}
+
+
+/// ضغطة ناعمة للأزرار العريضة: تصغر شوي وتغمق شوي
+struct PrimaryPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .brightness(configuration.isPressed ? -0.06 : 0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
+    }
 }
