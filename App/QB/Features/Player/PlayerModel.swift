@@ -206,7 +206,13 @@ final class PlayerModel {
             else if forceVLC { useVLC = true }
             else if let manualNative { useVLC = !manualNative }
             else { useVLC = automaticVLC }
-            let engine: any PlaybackEngine = useVLC ? VLCEngine() : makeNative()
+            // Hybrid: a source that would go to VLC only because of its container (MKV) is remuxed on the fly
+            // to HLS so the native player plays it (smoother, hardware, PiP/AirPlay). If the codec can't play
+            // natively (DTS, TrueHD, VP9 ...) or the file has no index, it plays in VLC as before.
+            // also when the user picked the native player for a source that needs VLC as-is
+            let needsContainerHelp = useVLC ? manualNative == nil : (source.engine == .vlc || nativeFailedThisTitle)
+            let tryRemux = !forceVLC && needsContainerHelp && remuxable(url: url, source: source)
+            let engine: any PlaybackEngine = (useVLC && !tryRemux) ? VLCEngine() : makeNative()
             wire(engine)
             self.engine = engine
             engineName = engine.kindName
@@ -215,6 +221,35 @@ final class PlayerModel {
             isBuffering = true
             engine.setRate(rate)
             startTicking()
+            closeRemux()
+            if tryRemux {
+                let token = UUID()
+                remuxToken = token
+                let headerMap = headers
+                Task { [weak self, weak engine] in
+                    let opened: RemuxedStream?
+                    do {
+                        opened = try await remuxOpen(url: url.absoluteString, headers: headerMap)
+                    } catch {
+                        print("[QB] remux not possible: \(error)")
+                        opened = nil
+                    }
+                    guard let self, self.remuxToken == token, let engine, engine === self.engine else {
+                        if let opened { remuxClose(playlistUrl: opened.playlistUrl) }
+                        return
+                    }
+                    if let opened, let local = URL(string: opened.playlistUrl) {
+                        self.remuxURL = opened.playlistUrl
+                        self.remuxedSourceId = source.id
+                        engine.load(url: local, headers: [:], startAt: startAt)
+                    } else {
+                        // not remuxable: same source, same second, in VLC (no toast, no flicker in the controls)
+                        self.remuxFailed.insert(source.id)
+                        self.start(source, startAt: startAt, forceVLC: true)
+                    }
+                }
+                return
+            }
             if useVLC, VLCEngine.stopping > 0 {
                 // نسخة VLC القديمة لسا تسكّر اتصالها بنفس الرابط: ننتظرها بدل ما نفتح الرابط مرتين
                 Task { [weak self, weak engine] in
@@ -226,6 +261,38 @@ final class PlayerModel {
                 engine.load(url: url, headers: headers, startAt: startAt)
             }
         }
+    }
+
+    // MARK: - remux (MKV -> HLS for the native player)
+
+    private var remuxURL: String?
+    private var remuxedSourceId: String?
+    private var remuxToken: UUID?
+    /// sources that turned out not remuxable (don't try again this session)
+    private var remuxFailed: Set<String> = []
+
+    private func remuxable(url: URL, source: RankedSource) -> Bool {
+        guard !remuxFailed.contains(source.id) else { return false }
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
+        let path = url.path.lowercased()
+        let name = (source.title + " " + (source.description ?? "")).lowercased()
+        // only Matroska (or no extension, checked by the remuxer itself); AVI, TS, FLV ... stay in VLC
+        let other = [".avi", ".ts", ".flv", ".wmv", ".m2ts", ".mpg", ".mpeg", ".ogv", ".rmvb", ".3gp", ".webm"]
+        if other.contains(where: { path.hasSuffix($0) }) { return false }
+        // codecs the native player can't decode: skip the attempt (the remuxer would refuse them anyway)
+        let noNative = ["truehd", "vp9", "av1", "xvid", "divx"]
+        if noNative.contains(where: { name.contains($0) }) { return false }
+        if name.contains("dts") && !(name.contains("aac") || name.contains("ddp") || name.contains("dd+") || name.contains("ac3")) {
+            return false
+        }
+        return true
+    }
+
+    private func closeRemux() {
+        remuxToken = nil
+        if let remuxURL { remuxClose(playlistUrl: remuxURL) }
+        remuxURL = nil
+        remuxedSourceId = nil
     }
 
     private func makeNative() -> NativeEngine {
@@ -275,6 +342,15 @@ final class PlayerModel {
         let position = elapsed
         noteFailure(failure, source: source, position: position)
         switch failure {
+        case .nativeCannotPlay where remuxedSourceId == source.id:
+            // the remuxed stream didn't play natively: same second in VLC, quietly (source itself is fine)
+            remuxFailed.insert(source.id)
+            closeRemux()
+            start(source, startAt: position, forceVLC: true)
+        case .sourceFailed where remuxedSourceId == source.id && !reportedOk:
+            remuxFailed.insert(source.id)
+            closeRemux()
+            start(source, startAt: position, forceVLC: true)
         case .nativeCannotPlay:
             // الأصلي ما قدر: نحفظ إن هذا المصدر يحتاج VLC ونحوّل من نفس الثانية
             try? core?.markSourceFailed(sourceId: source.id, nativeFailed: true)
@@ -600,6 +676,7 @@ final class PlayerModel {
     }
 
     private func stopEngine() {
+        closeRemux()
         tickTask?.cancel()
         tickTask = nil
         engine?.onFailure = nil

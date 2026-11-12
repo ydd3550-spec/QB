@@ -205,3 +205,31 @@ impl QBCore {
 pub fn normalize_addon_url(url: String) -> Result<String, CoreError> {
     qb_protocol::normalize_manifest_url(&url)
 }
+
+
+/// MKV that AVPlayer can play after an on-the-fly remux to HLS (served on 127.0.0.1)
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RemuxedStream {
+    pub playlist_url: String,
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub duration_s: f64,
+}
+
+/// Opens a remote MKV for AVPlayer. An error means it can't be remuxed (codec, no index, ...): use VLC.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn remux_open(url: String, headers: std::collections::HashMap<String, String>) -> Result<RemuxedStream, CoreError> {
+    let o = qb_remux::open_url(url, headers).await.map_err(|x| CoreError::Network(x.0))?;
+    Ok(RemuxedStream {
+        playlist_url: o.playlist_url,
+        video_codec: o.info.video_codec,
+        audio_codec: o.info.audio_codec,
+        duration_s: o.info.duration_s,
+    })
+}
+
+/// Frees a remux session
+#[uniffi::export]
+pub fn remux_close(playlist_url: String) {
+    qb_remux::close(&playlist_url);
+}

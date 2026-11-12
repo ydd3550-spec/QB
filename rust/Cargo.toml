@@ -27,6 +27,7 @@ qb-subs     = { path = "crates/qb-subs" }
 qb-store    = { path = "crates/qb-store" }
 qb-cache    = { path = "crates/qb-cache" }
 qb-core     = { path = "crates/qb-core" }
+qb-remux    = { path = "crates/qb-remux" }
 
 [profile.release]
 lto = "fat"
