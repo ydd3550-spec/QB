@@ -141,6 +141,8 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 40)
+            .font(Typo.row)
             .qbScreenBackground()
             .navigationTitle(L("الإعدادات"))
             .navigationDestination(for: SettingsRoute.self) { route in
@@ -206,14 +208,14 @@ struct SettingsView: View {
     private func row(_ title: String, _ icon: String, detail: String? = nil, destructive: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(destructive ? .white : Palette.onAccent)
-                .frame(width: 30, height: 30)
-                .background((destructive ? Palette.dead : Palette.accent).gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text(title).font(Typo.bodyMedium).foregroundStyle(destructive ? Palette.dead : .primary)
+                .frame(width: 26, height: 26)
+                .background((destructive ? Palette.dead : Palette.accent).gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Text(title).font(Typo.row).foregroundStyle(destructive ? Palette.dead : .primary)
             if let detail {
                 Spacer()
-                Text(detail).font(Typo.info).foregroundStyle(.secondary).monospacedDigit()
+                Text(detail).font(Typo.caption).foregroundStyle(.secondary).monospacedDigit()
             }
         }
     }
@@ -228,22 +230,22 @@ struct FeedbackRow: View {
         Button(action: open) {
             HStack(spacing: 12) {
                 Image(systemName: "paperplane.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.accent)
-                    .frame(width: 34, height: 34)
-                    .background(Palette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Palette.accent.opacity(0.25), lineWidth: 0.5))
+                    .frame(width: 28, height: 28)
+                    .background(Palette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.accent.opacity(0.25), lineWidth: 0.5))
                 Text(L("أرسل ملاحظاتك"))
-                    .font(Typo.bodyMedium)
+                    .font(Typo.row)
                     .foregroundStyle(.primary)
                 Spacer(minLength: 8)
                 Image(systemName: "arrow.up.forward")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-            .padding(.leading, 10)
-            .padding(.trailing, 18)
-            .padding(.vertical, 9)
+            .padding(.leading, 8)
+            .padding(.trailing, 16)
+            .padding(.vertical, 7)
             .background(Palette.surfaceRaised, in: Capsule())
             .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 0.5))
             .contentShape(Capsule())
