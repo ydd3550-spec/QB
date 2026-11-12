@@ -475,15 +475,7 @@ struct PlayerHost: View {
                     .padding(.vertical, 2)
                 }
                 .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                // Fixed width (widest name); the name only changes once an engine actually plays
-                ZStack(alignment: .trailing) {
-                    Text(verbatim: "AVPlayer").hidden()
-                    Text(verbatim: player.settledEngineName.isEmpty ? player.engineName : player.settledEngineName)
-                }
-                .font(Typo.badge)
-                .foregroundStyle(.white.opacity(0.6))
-                .lineLimit(1)
-                .fixedSize()
+                engineMenu
             }
         }
         .foregroundStyle(.white)
@@ -491,6 +483,41 @@ struct PlayerHost: View {
 
     private var rateLabel: String {
         player.rate == 1 ? L("السرعة") : String(format: "%.2gx", player.rate)
+    }
+
+    /// Engine picker (native / VLC): always in the same place with the same width; the name only changes
+    /// once an engine actually plays, so it doesn't flicker while loading
+    private var engineMenu: some View {
+        let current = player.settledEngineName.isEmpty ? player.engineName : player.settledEngineName
+        let isVLC = current == "VLC"
+        return Menu {
+            Button {
+                player.chooseEngine(native: true)
+            } label: {
+                Label(L("الأصلي"), systemImage: !isVLC ? "checkmark" : "apple.logo")
+            }
+            Button {
+                player.chooseEngine(native: false)
+            } label: {
+                Label("VLC", systemImage: isVLC ? "checkmark" : "play.rectangle")
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu").font(.system(size: 13, weight: .semibold))
+                ZStack {
+                    Text(L("الأصلي")).hidden()
+                    Text(verbatim: "VLC").hidden()
+                    Text(isVLC ? "VLC" : L("الأصلي"))
+                }
+                .font(Typo.caption).lineLimit(1).fixedSize()
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .glassEffect(Glass.player.interactive(), in: .capsule)
+        }
+        .simultaneousGesture(TapGesture().onEnded { hideTask?.cancel() })
+        .accessibilityLabel(L("المشغّل"))
     }
 
     /// reserve: the label's width is the widest of these, so changing it (speed) never moves the chips after it

@@ -69,6 +69,8 @@ final class PlayerModel {
     /// AVPlayer already couldn't play a source of this title: the next sources start straight in VLC
     /// (before: every source went AVPlayer -> VLC -> next source AVPlayer -> VLC ...)
     private var nativeFailedThisTitle = false
+    /// The user's own engine choice from the player (true = native, false = VLC), kept for this title
+    private(set) var manualNative: Bool?
     private(set) var errorMessage: String?
     /// تفاصيل الفشل الحقيقية (المشغّل، السبب، الموقع، رد السيرفر) تطلع تحت الرسالة ومعها زر نسخ
     private(set) var failureDetail: String?
@@ -130,6 +132,7 @@ final class PlayerModel {
         autoAdvances = 0
         freshRetried = []
         nativeFailedThisTitle = false
+        manualNative = nil
         lastKnownDuration = ((try? core?.progress(mediaId: context.ref.id)) ?? nil)?.durationS
         failureLog = []
         failureDetail = nil
@@ -165,7 +168,7 @@ final class PlayerModel {
         return p.positionS > 15 ? p.positionS - 3 : 0
     }
 
-    private func start(_ source: RankedSource, startAt: Double, forceVLC: Bool) {
+    private func start(_ source: RankedSource, startAt: Double, forceVLC: Bool, forceNative: Bool = false) {
         stopEngine()
         self.source = source
         triedSources.insert(source.id)
@@ -195,8 +198,14 @@ final class PlayerModel {
                 fail(L("رابط المصدر غير صالح"))
                 return
             }
-            let useVLC = forceVLC || source.engine == .vlc || app?.preferredEngine == "vlc"
-                || nativeFailedThisTitle
+            // Native first for everything it can open (smoothest); VLC only when the source needs it
+            // or native already failed on this title. The user's own choice in the player wins.
+            let automaticVLC = source.engine == .vlc || app?.preferredEngine == "vlc" || nativeFailedThisTitle
+            let useVLC: Bool
+            if forceNative { useVLC = false }
+            else if forceVLC { useVLC = true }
+            else if let manualNative { useVLC = !manualNative }
+            else { useVLC = automaticVLC }
             let engine: any PlaybackEngine = useVLC ? VLCEngine() : makeNative()
             wire(engine)
             self.engine = engine
@@ -270,6 +279,7 @@ final class PlayerModel {
             // الأصلي ما قدر: نحفظ إن هذا المصدر يحتاج VLC ونحوّل من نفس الثانية
             try? core?.markSourceFailed(sourceId: source.id, nativeFailed: true)
             nativeFailedThisTitle = true
+            if manualNative == true { manualNative = nil }
             app?.showToast(L("نحوّل لمشغّل VLC"))
             start(source, startAt: position, forceVLC: true)
         case .sourceFailed:
@@ -396,6 +406,17 @@ final class PlayerModel {
         guard let source else { return }
         triedSources.remove(source.id)
         start(source, startAt: elapsed, forceVLC: source.engine == .vlc || engineName == "VLC")
+    }
+
+    /// The engine picker in the player: reopen the same source in the chosen engine from the same second
+    func chooseEngine(native: Bool) {
+        guard let source else { return }
+        manualNative = native
+        let isNative = engineName != "VLC"
+        guard native != isNative || errorMessage != nil else { return }
+        triedSources.remove(source.id)
+        if !native { try? core?.markSourceFailed(sourceId: source.id, nativeFailed: true) }
+        start(source, startAt: elapsed, forceVLC: !native, forceNative: native)
     }
 
     /// يجبر VLC للمصدر الحالي (من قائمة المشغّل)

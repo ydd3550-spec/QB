@@ -219,6 +219,8 @@ final class VLCEngine: PlaybackEngine {
         for option in VLCHeaderOptions.options(for: headers) { media.addOption(option) }
         if startAt > 1 { media.addOption(":start-time=\(Int(startAt))") }
         media.addOption(":network-caching=3000")
+        // Hardware decoding (VideoToolbox) first, software only if the codec isn't supported by the hardware
+        media.addOption(":codec=videotoolbox,any")
         // VLC يرسم الوقت واسم الملف داخل الصورة بعد التقديم: نطفيه، الوقت عندنا بالشريط
         media.addOption(":no-osd")
         media.addOption(":no-video-title-show")
