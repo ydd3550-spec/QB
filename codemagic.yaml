@@ -81,3 +81,51 @@ workflows:
       - build/xcodebuild.log
       - rust-tests.log
       - swift-tests.log
+
+  # صور حقيقية من المحاكي (ما تغيّر التطبيق ولا تطلّع ipa)
+  qb-screenshots:
+    name: QB simulator screenshots
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      xcode: latest
+      cocoapods: default
+      vars:
+        CARGO_TERM_COLOR: never
+        CARGO_PROFILE_RELEASE_LTO: thin
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+        - $CM_BUILD_DIR/rust/target
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Install Rust + iOS targets
+        script: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          source "$HOME/.cargo/env" || true
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $CM_ENV
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          xcodebuild -version
+          xcrun simctl list runtimes
+      - name: Build Rust core (device + simulator)
+        script: |
+          export QB_TARGETS="aarch64-apple-ios aarch64-apple-ios-sim"
+          ./scripts/build-core.sh
+      - name: Generate project + pods (with screenshot UI test target)
+        script: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          python3 scripts/gen-strings.py
+          ruby tools/screenshots/add-target.rb
+          xcodegen generate
+          pod install --repo-update
+      - name: Run app on simulator and capture screenshots
+        script: |
+          ./tools/screenshots/run.sh
+    artifacts:
+      - build/shots.zip
