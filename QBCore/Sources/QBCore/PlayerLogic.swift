@@ -32,6 +32,23 @@ public enum PlayerLogic {
         return previous + step
     }
 
+    /// الصوت/الإضاءة بالسحب: نص ارتفاع الشاشة يغطي المدى كله (سريع)، لفوق يرفع. ما نقص هنا عشان نعرف المطّ
+    public static func sideLevel(start: Double, dy: CGFloat, height: CGFloat) -> Double {
+        guard height > 0 else { return start }
+        return start - Double(dy / (height * 0.5))
+    }
+
+    /// وين بدأ السحب العمودي: الثلث اليسار صوت، اليمين إضاءة، والنص (أو من فوق) خروج من المشغّل
+    public enum VerticalDrag: Equatable { case volume, brightness, dismiss }
+
+    public static func verticalDrag(startX: CGFloat, startY: CGFloat, size: CGSize) -> VerticalDrag {
+        guard size.width > 0, size.height > 0 else { return .dismiss }
+        if startY < size.height * 0.15 { return .dismiss }
+        if startX < size.width / 3 { return .volume }
+        if startX > size.width * 2 / 3 { return .brightness }
+        return .dismiss
+    }
+
     /// الفيديو عرضي بوضوح (ندوّر له الشاشة أفقي)
     public static func isLandscapeVideo(_ size: CGSize) -> Bool {
         size.width > 0 && size.height > 0 && size.width > size.height * 1.15

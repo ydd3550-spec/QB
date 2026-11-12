@@ -15,6 +15,12 @@ struct PlayerHost: View {
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
+    /// السحب العمودي الحالي: صوت، إضاءة، أو خروج
+    @State private var verticalKind: PlayerLogic.VerticalDrag = .dismiss
+    @State private var levels = SideLevels()
+    /// شكل الزر يتغيّر أول ما تضغط، قبل ما يرد المشغّل
+    @State private var optimisticPlaying: Bool?
+    @State private var playTaps = 0
     @State private var ripple: RippleSide?
     /// كم ثانية تجمّعت بالضغطات المتتالية على نفس الطرف (10، 20، 30…)
     @State private var rippleSeconds = 10
@@ -38,6 +44,10 @@ struct PlayerHost: View {
                     .ignoresSafeArea()
                     .opacity(player.surface == nil ? 0 : 1)
 
+                HiddenVolumeView(levels: levels)
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+
                 gestureLayer(size: geo.size)
 
                 SubtitleOverlay(text: player.cueText, scale: app.subtitleSize, background: app.subtitleBackground)
@@ -60,6 +70,9 @@ struct PlayerHost: View {
                 }
 
                 loadingOrError
+
+                SideLevelPill(levels: levels)
+                    .ignoresSafeArea()
 
                 if controlsVisible {
                     controls
@@ -125,13 +138,25 @@ struct PlayerHost: View {
                         if dragAxis == nil {
                             dragAxis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
                             seekStart = player.elapsed
+                            if dragAxis == .vertical {
+                                verticalKind = PlayerLogic.verticalDrag(startX: v.startLocation.x, startY: v.startLocation.y, size: size)
+                                switch verticalKind {
+                                case .volume: levels.begin(.volume)
+                                case .brightness: levels.begin(.brightness)
+                                case .dismiss: break
+                                }
+                            }
                         }
                         switch dragAxis {
                         case .horizontal:
                             guard player.duration != nil else { return }
                             seekPreview = SeekMath.target(start: seekStart, dx: v.translation.width, width: size.width, duration: player.duration)
                         case .vertical:
-                            dragOffset = max(0, v.translation.height)
+                            if verticalKind == .dismiss {
+                                dragOffset = max(0, v.translation.height)
+                            } else {
+                                levels.change(dy: v.translation.height, height: size.height)
+                            }
                         case nil:
                             break
                         }
@@ -142,6 +167,11 @@ struct PlayerHost: View {
                             player.seek(to: target)
                             seekPreview = nil
                             Haptics.tap()
+                            return
+                        }
+                        if dragAxis == .vertical, verticalKind != .dismiss {
+                            levels.end()
+                            verticalKind = .dismiss
                             return
                         }
                         if dragAxis == .vertical {
@@ -255,32 +285,45 @@ struct PlayerHost: View {
     /// بالنص زر التشغيل/الإيقاف بس. التقديم والرجوع بضغطتين على طرف الشاشة مثل يوتيوب
     private var transport: some View {
         Button {
+            // الشكل يتغيّر فورًا والأمر يروح للمشغّل على طول
+            let next = !(optimisticPlaying ?? player.isPlaying)
+            withAnimation(.snappy(duration: 0.18)) { optimisticPlaying = next }
+            playTaps += 1
+            Haptics.tap()
             touch { player.togglePlay() }
+            let token = playTaps
+            Task {
+                try? await Task.sleep(for: .milliseconds(700))
+                if playTaps == token { optimisticPlaying = nil }
+            }
         } label: {
             ZStack {
                 // مؤشر التحميل الوحيد بالشاشة يكون هنا داخل الزر
-                if showsSpinner {
+                if showsSpinner && optimisticPlaying == nil {
                     ProgressView().controlSize(.small).tint(.white)
                 } else {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: shownPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: PlayerLogic.Transport.play * 0.4, weight: .bold))
                         // المثلث وزنه على اليسار، نزحزحه شوي عشان يبان بالنص
-                        .offset(x: player.isPlaying ? 0 : PlayerLogic.Transport.play * 0.04)
-                        .contentTransition(.symbolEffect(.replace))
+                        .offset(x: shownPlaying ? 0 : PlayerLogic.Transport.play * 0.04)
+                        .contentTransition(.symbolEffect(.replace.downUp.byLayer))
+                        .symbolEffect(.bounce.down, options: .speed(1.6), value: playTaps)
                 }
             }
             .foregroundStyle(.white)
             .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
             .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SoftPressStyle())
         .glassEffect(.clear.interactive(), in: .circle)
-        .accessibilityLabel(player.isPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
+        .accessibilityLabel(shownPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
         .accessibilityAction(named: L("رجوع 10 ثواني")) { player.skip(-10) }
         .accessibilityAction(named: L("تقديم 10 ثواني")) { player.skip(10) }
         .environment(\.layoutDirection, .leftToRight)
         .opacity(player.errorMessage == nil ? 0.92 : 0)
     }
+
+    private var shownPlaying: Bool { optimisticPlaying ?? player.isPlaying }
 
     private var showsSpinner: Bool {
         player.state == .loading || (player.isBuffering && player.state != .paused)
@@ -532,6 +575,15 @@ struct SubtitleOverlay: View {
 }
 
 /// أثر الضغط مرتين على الطرف
+/// ضغطة ناعمة: الزر يصغر شوي ويرجع بسبرنق سريع
+struct SoftPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
 /// تقديم/رجوع مثل يوتيوب: قوس شفاف على طرف الشاشة وأسهم صغيرة وعدد الثواني، بدون زر
 struct SeekRipple: View {
     let side: PlayerHost.RippleSide

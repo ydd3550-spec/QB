@@ -46,6 +46,21 @@ struct PlayerLogicTests {
         #expect(arc < width / 2 - PlayerLogic.Transport.play / 2)
     }
 
+    @Test func sideLevelIsFast() {
+        // ربع الشاشة لفوق = نص المدى
+        #expect(abs(PlayerLogic.sideLevel(start: 0.2, dy: -200, height: 800) - 0.7) < 0.0001)
+        #expect(PlayerLogic.sideLevel(start: 0.5, dy: 400, height: 800) < 0)
+    }
+
+    @Test func verticalDragZones() {
+        let size = CGSize(width: 900, height: 400)
+        #expect(PlayerLogic.verticalDrag(startX: 100, startY: 200, size: size) == .volume)
+        #expect(PlayerLogic.verticalDrag(startX: 800, startY: 200, size: size) == .brightness)
+        #expect(PlayerLogic.verticalDrag(startX: 450, startY: 200, size: size) == .dismiss)
+        // من فوق دايمًا خروج حتى على الطرف
+        #expect(PlayerLogic.verticalDrag(startX: 100, startY: 20, size: size) == .dismiss)
+    }
+
     @Test func swipeThreshold() {
         #expect(PlayerLogic.swipeDismisses(translation: 200, predicted: 200))
         #expect(PlayerLogic.swipeDismisses(translation: 60, predicted: 500))
