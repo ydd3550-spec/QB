@@ -261,7 +261,11 @@ pub struct RemuxPgsFrame {
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn remux_open(url: String, headers: std::collections::HashMap<String, String>) -> Result<RemuxedStream, CoreError> {
     let o = qb_remux::open_url(url, headers).await.map_err(|x| CoreError::Network(x.0))?;
-    Ok(RemuxedStream {
+    Ok(stream_of(o))
+}
+
+fn stream_of(o: qb_remux::Opened) -> RemuxedStream {
+    RemuxedStream {
         playlist_url: o.playlist_url,
         video_codec: o.info.video_codec,
         audio_codec: o.info.audio_codec,
@@ -286,7 +290,14 @@ pub async fn remux_open(url: String, headers: std::collections::HashMap<String, 
             .into_iter()
             .map(|t| RemuxVlcTrack { kind: t.kind, ordinal: t.ordinal as u32, name: t.name, language: t.language, codec: t.codec })
             .collect(),
-    })
+    }
+}
+
+/// Same as `remux_open` for a file on the device (downloads, and the player checks in the tests)
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn remux_open_file(path: String) -> Result<RemuxedStream, CoreError> {
+    let o = qb_remux::open_file(path.into()).await.map_err(|x| CoreError::Network(x.0))?;
+    Ok(stream_of(o))
 }
 
 /// Shows PGS track `index` of the stream over the native player (None = none)

@@ -536,3 +536,21 @@ fn parse_block(d: &[u8], cluster_tc: i64, key_override: Option<bool>, duration: 
         p += s;
     }
 }
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+
+    #[test]
+    fn header_stripping_and_zlib_are_undone() {
+        let mut t = Track::default();
+        t.encoding = Encoding::Strip(vec![0x0B, 0x77]);
+        assert_eq!(t.decode_frame(vec![1, 2, 3]).unwrap(), vec![0x0B, 0x77, 1, 2, 3]);
+        use std::io::Write;
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(b"pgs display set").unwrap();
+        t.encoding = Encoding::Zlib;
+        assert_eq!(t.decode_frame(z.finish().unwrap()).unwrap(), b"pgs display set".to_vec());
+        assert!(t.decode_frame(vec![9, 9, 9]).is_none());
+    }
+}
