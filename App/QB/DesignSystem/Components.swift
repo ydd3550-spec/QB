@@ -41,9 +41,32 @@ struct PrimaryButton: View {
     var systemImage: String = "play.fill"
     var expand = false
     var width: CGFloat? = nil
+    /// زجاج شفاف (فوق الفيديو في المشغّل) بدل الذهبي الصريح. نفس الحجم والنص والأيقونة
+    var clear = false
     let action: () -> Void
 
     var body: some View {
+        if clear {
+            Button(action: action) {
+                Label(title, systemImage: systemImage)
+                    .font(ButtonMetrics.font)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .padding(.horizontal, ButtonMetrics.horizontalPadding)
+                    .frame(width: width)
+                    .frame(maxWidth: expand ? .infinity : nil)
+                    .frame(height: expand ? ButtonMetrics.wideHeight : ButtonMetrics.height)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(Glass.player.interactive(), in: .capsule)
+        } else {
+            solid
+        }
+    }
+
+    private var solid: some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(ButtonMetrics.font)
@@ -73,6 +96,8 @@ struct GlassButton: View {
     var systemImage: String?
     var expand = false
     var width: CGFloat? = nil
+    /// نفس زجاج المشغّل الشفاف (زر الرجوع فوق)
+    var clear = false
     let action: () -> Void
 
     var body: some View {
@@ -97,7 +122,7 @@ struct GlassButton: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffect((clear ? Glass.player : Glass.regular).interactive(), in: .capsule)
     }
 }
 

@@ -509,14 +509,14 @@ struct PlayerHost: View {
         VStack(spacing: 12) {
             HStack {
                 if showSkipIntro {
-                    GlassButton(title: L("تخطّي المقدمة"), systemImage: "forward.fill") {
+                    GlassButton(title: L("تخطّي المقدمة"), systemImage: "forward.fill", clear: true) {
                         touch { player.skip(Double(app.skipIntroSeconds)) }
                     }
                     .transition(.opacity)
                 }
                 Spacer()
                 if player.context?.video != nil, player.nextUp != nil || player.context?.meta != nil {
-                    GlassButton(title: L("الحلقة الجاية"), systemImage: "forward.end.fill") {
+                    GlassButton(title: L("الحلقة الجاية"), systemImage: "forward.end.fill", clear: true) {
                         touch { player.playNext() }
                     }
                 }
@@ -730,13 +730,13 @@ struct PlayerHost: View {
                     .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 HStack(spacing: 12) {
-                    GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise", width: ButtonMetrics.pairWidth) { player.retry() }
+                    GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise", width: ButtonMetrics.pairWidth, clear: true) { player.retry() }
                     // دايمًا شغّال: لو ما بقى مصدر ما جرّبناه، يفتح قائمة المصادر
-                    PrimaryButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath", width: ButtonMetrics.pairWidth) {
+                    PrimaryButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath", width: ButtonMetrics.pairWidth, clear: true) {
                         if player.canTryAnother { player.tryAnotherSource() } else { sheet = .sources }
                     }
                 }
-                GlassButton(title: L("المصادر"), systemImage: "rectangle.stack.fill", width: ButtonMetrics.pairWidth) { sheet = .sources }
+                GlassButton(title: L("المصادر"), systemImage: "rectangle.stack.fill", width: ButtonMetrics.pairWidth, clear: true) { sheet = .sources }
             }
             .foregroundStyle(.white)
             .padding(28)
@@ -766,11 +766,11 @@ struct PlayerHost: View {
                         Text(next.title.isEmpty ? L("الحلقة %@", "\(next.episode ?? 0)") : next.title)
                             .font(Typo.headline).lineLimit(2)
                         HStack(spacing: 10) {
-                            PrimaryButton(title: player.nextCountdown.map { L("تشغيل خلال %@", "\($0)") } ?? L("تشغيل")) {
+                            PrimaryButton(title: player.nextCountdown.map { L("تشغيل خلال %@", "\($0)") } ?? L("تشغيل"), clear: true) {
                                 player.playNext()
                             }
                             if player.nextCountdown != nil {
-                                GlassButton(title: L("إلغاء")) { player.cancelNext() }
+                                GlassButton(title: L("إلغاء"), clear: true) { player.cancelNext() }
                             }
                         }
                     }
