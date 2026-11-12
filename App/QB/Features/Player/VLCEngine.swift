@@ -43,14 +43,70 @@ nonisolated enum VLCLayerThreadGuard {
 /// مشغّل VLC: MKV وAVI وWebM وTS وأي شي ما يقدر عليه AVPlayer.
 /// الأوامر (تشغيل، إيقاف، تقديم) تروح لطابور واحد برا الخيط الرئيسي
 /// لأن libVLC ممكن يعلّق المستدعي (خصوصًا التقديم في ملف على النت).
+/// منظر رسم VLC: لما يتغيّر مقاسه (تدوير عادي أو مفروض) أو يرجع التطبيق (قفل الشاشة، الخلفية)
+/// يبلّغ عشان نعيد ترتيب الصورة. VLC على iOS يتجاهل تغيير المقاس اللي يصير والتطبيق مو نشط
+/// (وسط حركة التدوير أو وهو بالخلفية)، فيظل يرسم بالمقاس القديم وتتمطّط الصورة.
+final class VLCSurfaceView: UIView {
+    var onRelayout: (() -> Void)?
+    private var lastSize: CGSize = .zero
+    private var pending: [DispatchWorkItem] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+        isUserInteractionEnabled = false
+        let center = NotificationCenter.default
+        for name in [UIApplication.didBecomeActiveNotification, UIApplication.willEnterForegroundNotification,
+                     UIApplication.protectedDataDidBecomeAvailableNotification] {
+            center.addObserver(self, selector: #selector(appCameBack), name: name, object: nil)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func appCameBack() { scheduleRelayout() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        for sub in subviews where sub.frame != bounds { sub.frame = bounds }
+        if bounds.size != lastSize {
+            lastSize = bounds.size
+            scheduleRelayout()
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { scheduleRelayout() }
+    }
+
+    /// مرتين: أول ما يهدأ التدوير، ومرة بعد ما يرجع التطبيق نشط أكيد
+    func scheduleRelayout() {
+        pending.forEach { $0.cancel() }
+        pending = [0.15, 0.6, 1.4].map { delay in
+            let work = DispatchWorkItem { [weak self] in self?.relayoutNow() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return work
+        }
+    }
+
+    private func relayoutNow() {
+        guard window != nil, UIApplication.shared.applicationState == .active else { return }
+        // نجبر منظر VLC يعيد حساب مقاسه حتى لو الإطار نفسه: هذا اللي يرسل المقاس الجديد لـ VLC
+        func touch(_ v: UIView) {
+            v.setNeedsLayout()
+            v.layoutIfNeeded()
+            v.subviews.forEach(touch)
+        }
+        for sub in subviews { sub.frame = bounds; touch(sub) }
+        onRelayout?()
+    }
+}
+
 final class VLCEngine: PlaybackEngine {
     let kindName = "VLC"
-    private let view: UIView = {
-        let v = UIView()
-        v.backgroundColor = .black
-        v.isUserInteractionEnabled = false
-        return v
-    }()
+    private let view = VLCSurfaceView()
     var surface: UIView { view }
 
     private let player = VLCMediaPlayer()
@@ -91,6 +147,27 @@ final class VLCEngine: PlaybackEngine {
     private var resumeChecked = false
     /// قص الصورة على نسبة الشاشة ("عرض:طول") لما يكون التكبير شغّال، nil = الحجم الأصلي
     private var cropRatio: String?
+    /// للترجمة: آخر وقت تغيّر من VLC ومتى، عشان نكمّل العد بين القراءات
+    private var clockTime: Double = 0
+    private var clockAt = Date.distantPast
+
+    // المراقب: الوقت يمشي بس ما فيه صور جديدة أو صوت = مخرج الصورة/الصوت مات
+    private var sourceURL: URL?
+    private var sourceHeaders: [String: String] = [:]
+    private var reopening = false
+    private var lastPictures = 0
+    private var picturesAt = Date()
+    private var everPictures = false
+    private var lastAudioBuffers = 0
+    private var audioAt = Date()
+    private var everAudio = false
+    /// وقت آخر صورة انعرضت فعلًا (الترجمة ما تسبق صورة واقفة)
+    private var frameTime: Double = 0
+    private var recoveryStage = 0
+    private var lastRecoveryAt = Date.distantPast
+    /// طفينا مسار الصورة واحنا بالخلفية (مثل تطبيق VLC): نرجّعه أول ما نرجع
+    private var parkedVideoTrack: Int32?
+    private var observers: [NSObjectProtocol] = []
 
     private(set) var audioTracks: [TrackOption] = []
     private(set) var embeddedSubtitles: [TrackOption] = []
@@ -101,19 +178,18 @@ final class VLCEngine: PlaybackEngine {
         guard !started else { return }
         started = true
         VLCLayerThreadGuard.install()
-        let media = VLCMedia(url: url)
-        for option in VLCHeaderOptions.options(for: headers) { media.addOption(option) }
-        if startAt > 1 { media.addOption(":start-time=\(Int(startAt))") }
+        sourceURL = url
+        sourceHeaders = headers
+        let media = makeMedia(url: url, headers: headers, startAt: startAt)
         resumeAt = startAt
-        media.addOption(":network-caching=3000")
-        // VLC يرسم الوقت واسم الملف داخل الصورة بعد التقديم: نطفيه، الوقت عندنا بالشريط
-        media.addOption(":no-osd")
-        media.addOption(":no-video-title-show")
+        view.onRelayout = { [weak self] in self?.applyCrop() }
+        observeApp()
         player.drawable = view
         player.media = media
         state = .loading
         isBuffering = true
         loadStarted = Date()
+        AudioSessionKeeper.shared.activate()
         player.play()
         applyCrop()
         tick = Task { [weak self] in
@@ -122,6 +198,172 @@ final class VLCEngine: PlaybackEngine {
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }
+    }
+
+    private func makeMedia(url: URL, headers: [String: String], startAt: Double) -> VLCMedia {
+        let media = VLCMedia(url: url)
+        for option in VLCHeaderOptions.options(for: headers) { media.addOption(option) }
+        if startAt > 1 { media.addOption(":start-time=\(Int(startAt))") }
+        media.addOption(":network-caching=3000")
+        // VLC يرسم الوقت واسم الملف داخل الصورة بعد التقديم: نطفيه، الوقت عندنا بالشريط
+        media.addOption(":no-osd")
+        media.addOption(":no-video-title-show")
+        // عدّاد الصور المعروضة والصوت المشغّل (للمراقب)
+        media.addOption(":stats")
+        return media
+    }
+
+    /// الخلفية والرجوع: مخرج الصورة في VLC ما ينجا من الخلفية (الصورة توقف والوقت يمشي)،
+    /// فنطفي مسار الصورة ونرجّعه أول ما يرجع التطبيق، فينولد مخرج جديد مربوط بالمنظر.
+    private func observeApp() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.parkVideo() }
+        })
+        observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.unparkVideo() }
+        })
+    }
+
+    private func parkVideo() {
+        guard started, !shutDown, !finished, parkedVideoTrack == nil else { return }
+        let current = player.currentVideoTrackIndex
+        guard current >= 0 else { return }
+        parkedVideoTrack = current
+        let box = UncheckedBox(player)
+        commands.async { box.value.currentVideoTrackIndex = -1 }
+    }
+
+    private func unparkVideo() {
+        guard started, !shutDown else { return }
+        AudioSessionKeeper.shared.activate()
+        if let track = parkedVideoTrack {
+            parkedVideoTrack = nil
+            player.drawable = view
+            let box = UncheckedBox(player)
+            let paused = state == .paused
+            commands.async {
+                box.value.currentVideoTrackIndex = track
+                // Paused: step one frame so the picture shows instead of black
+                if paused {
+                    Thread.sleep(forTimeInterval: 0.3)
+                    if !box.value.isPlaying { box.value.gotoNextFrame() }
+                }
+            }
+            picturesAt = Date()
+        }
+        view.scheduleRelayout()
+    }
+
+    /// يربط المنظر من جديد ويعيد تشغيل مسار الصورة (ينولد مخرج صورة جديد)، بدون ما يوقف التشغيل
+    private func restartVideoOutput() {
+        player.drawable = view
+        let box = UncheckedBox(player)
+        let parked = parkedVideoTrack
+        parkedVideoTrack = nil
+        commands.async {
+            let p = box.value
+            var track = parked ?? p.currentVideoTrackIndex
+            if track < 0 {
+                track = (p.videoTrackIndexes as? [NSNumber])?.map(\.int32Value).first { $0 >= 0 } ?? -1
+            }
+            guard track >= 0 else { return }
+            p.currentVideoTrackIndex = -1
+            p.currentVideoTrackIndex = track
+        }
+        view.scheduleRelayout()
+    }
+
+    /// يشغّل الصوت من جديد (مخرج صوت جديد) بعد ما ننشّط جلسة الصوت
+    private func restartAudioOutput() {
+        AudioSessionKeeper.shared.activate()
+        let box = UncheckedBox(player)
+        commands.async {
+            let p = box.value
+            let track = p.currentAudioTrackIndex
+            guard track >= 0 else { return }
+            p.currentAudioTrackIndex = -1
+            p.currentAudioTrackIndex = track
+        }
+    }
+
+    /// آخر حل: نفتح نفس المصدر من جديد من نفس الثانية، بدون رسالة
+    private func reopen() {
+        guard let url = sourceURL, !reopening, !shutDown, !finished else { return }
+        reopening = true
+        let at = elapsed
+        let media = makeMedia(url: url, headers: sourceHeaders, startAt: at)
+        let box = UncheckedBox(player)
+        commands.async {
+            box.value.stop()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.shutDown else { return }
+                self.resumeAt = at
+                self.resumeChecked = false
+                self.hasPlayed = false
+                self.opened = false
+                self.everPictures = false
+                self.everAudio = false
+                self.lastPictures = 0
+                self.lastAudioBuffers = 0
+                self.loadStarted = Date()
+                self.lastMove = Date()
+                self.clockAt = .distantPast
+                self.trackSignature = ""
+                self.player.drawable = self.view
+                self.player.media = media
+                self.reopening = false
+                AudioSessionKeeper.shared.activate()
+                self.player.play()
+                if self.wantedRate != 1 { self.player.rate = self.wantedRate }
+                self.applyCrop()
+            }
+        }
+    }
+
+    /// الوقت يمشي بس الصورة واقفة أو الصوت مقطوع قرابة ثانيتين: نصلح لحالنا بدون رسالة.
+    /// أول مرة نشغّل المخرج من جديد، ولو ما نفع نفتح المصدر من نفس المكان.
+    private func watchdog() {
+        let now = Date()
+        guard hasPlayed, player.isPlaying, state == .playing, now > pendingSeekUntil, let media = player.media else {
+            picturesAt = now
+            audioAt = now
+            return
+        }
+        let pictures = media.numberOfDisplayedPictures
+        let buffers = media.numberOfPlayedAudioBuffers
+        if pictures != lastPictures {
+            if pictures > 0 { everPictures = true }
+            lastPictures = pictures
+            picturesAt = now
+            frameTime = elapsed
+            recoveryStage = 0
+        }
+        if buffers != lastAudioBuffers {
+            if buffers > 0 { everAudio = true }
+            lastAudioBuffers = buffers
+            audioAt = now
+        }
+        // العدّاد ما يشتغل أبد (ما تغيّر ولا مرة) = ما نحكم عليه
+        let videoDead = everPictures && parkedVideoTrack == nil && now.timeIntervalSince(picturesAt) > 2
+        let audioDead = everAudio && player.currentAudioTrackIndex >= 0 && now.timeIntervalSince(audioAt) > 2.5
+        guard videoDead || audioDead, now.timeIntervalSince(lastRecoveryAt) > 3 else { return }
+        lastRecoveryAt = now
+        recoveryStage += 1
+        if recoveryStage == 1 {
+            if videoDead { restartVideoOutput() }
+            if audioDead { restartAudioOutput() }
+            picturesAt = now
+            audioAt = now
+        } else {
+            recoveryStage = 0
+            reopen()
+        }
+    }
+
+    /// الصورة واقفة والوقت يمشي
+    private var pictureFrozen: Bool {
+        everPictures && parkedVideoTrack == nil && Date().timeIntervalSince(picturesAt) > 0.75
     }
 
     /// ملء الشاشة: VLC يقص الصورة على نسبة الشاشة نفسها، فتملّيها بدون ما تتمطّط
@@ -135,22 +377,39 @@ final class VLCEngine: PlaybackEngine {
         applyCrop()
     }
 
+    /// يعيد ترتيب الصورة: الحجم الأصلي = نسبة الفيديو نفسها وتتلاءم مع الشاشة،
+    /// التكبير = قص على نسبة الشاشة. ما نغيّر نسبة العرض أبد، فما تتمطّط الصورة.
+    /// تعيينها من جديد يخلّي VLC يحسب مكان الصورة على المقاس الحالي.
     private func applyCrop() {
         guard started, !shutDown else { return }
         let box = UncheckedBox(player)
         let ratio = cropRatio
         commands.async {
+            box.value.videoAspectRatio = nil
             if let ratio {
                 // libVLC ياخذ نسخة من النص، فيكفي يعيش وقت الاستدعاء
                 ratio.withCString { box.value.videoCropGeometry = UnsafeMutablePointer(mutating: $0) }
             } else {
                 box.value.videoCropGeometry = nil
             }
+            // 0 = يتلاءم مع النافذة بمقاسها الحالي
+            box.value.scaleFactor = 0
         }
     }
 
+    func refreshLayout() { view.scheduleRelayout() }
+
+    /// للترجمة: وقت VLC المبلّغ + اللي مر من بعده وهو شغّال (VLC يبلّغ الوقت بخطوات)
+    var liveTime: Double {
+        // الصورة واقفة: الترجمة توقف عند آخر صورة انعرضت
+        if state == .playing, pictureFrozen { return min(elapsed, frameTime) }
+        guard state == .playing, Date() > pendingSeekUntil, clockAt != .distantPast else { return elapsed }
+        let ahead = min(Date().timeIntervalSince(clockAt), 1.0) * Double(wantedRate)
+        return max(elapsed, clockTime + max(0, ahead))
+    }
+
     private func poll() {
-        guard !finished else { return }
+        guard !finished, !reopening else { return }
         let s = player.state
         switch s {
         case .opening, .buffering:
@@ -180,7 +439,13 @@ final class VLCEngine: PlaybackEngine {
         }
 
         let t = Double(player.time.intValue) / 1000
-        if t.isFinite, t >= 0, Date() > pendingSeekUntil { elapsed = t }
+        if t.isFinite, t >= 0, Date() > pendingSeekUntil {
+            elapsed = t
+            if t != clockTime || !player.isPlaying {
+                clockTime = t
+                clockAt = Date()
+            }
+        }
         if t > 0.05, abs(t - lastTime) > 0.05 {
             lastTime = t
             lastMove = Date()
@@ -216,6 +481,8 @@ final class VLCEngine: PlaybackEngine {
             isBuffering = false
             state = .paused
         }
+
+        watchdog()
 
         // ما انفتح شي خلال 25 ثانية: المصدر ما يرد
         if !hasPlayed, wantsPlay, Date().timeIntervalSince(loadStarted) > 25 {
@@ -264,6 +531,7 @@ final class VLCEngine: PlaybackEngine {
     func play() {
         guard started, !shutDown else { return }
         wantsPlay = true
+        AudioSessionKeeper.shared.activate()
         if state == .ended {
             // بعد النهاية VLC يحتاج يبدأ من جديد
             finished = false
@@ -298,6 +566,9 @@ final class VLCEngine: PlaybackEngine {
         guard started, !shutDown else { return }
         let target = max(0, seconds)
         elapsed = target
+        clockTime = target
+        clockAt = .distantPast
+        frameTime = target
         pendingSeekUntil = Date().addingTimeInterval(1.2)
         lastMove = Date()
         let box = UncheckedBox(player)
@@ -340,6 +611,8 @@ final class VLCEngine: PlaybackEngine {
         finished = true
         tick?.cancel()
         tick = nil
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers = []
         state = .idle
         guard started else { return }
         let box = UncheckedBox(player)

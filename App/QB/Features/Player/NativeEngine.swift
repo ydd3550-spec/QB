@@ -6,6 +6,12 @@ import UIKit
 final class PlayerLayerView: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // الطبقة هي طبقة المنظر نفسه، بس نتأكد إن ما فيه حركة ناقصة بعد التدوير أو القفل
+        playerLayer.removeAllAnimations()
+    }
 }
 
 /// المشغّل الأصلي: MP4 وHLS وكل شي يقدر عليه AVPlayer.
@@ -68,6 +74,33 @@ final class NativeEngine: NSObject, PlaybackEngine {
             controller?.canStartPictureInPictureAutomaticallyFromInline = true
             pip = controller
         }
+        // Back from background / screen lock: make sure the layer is attached to the player and rendering
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                AudioSessionKeeper.shared.activate()
+                if self.view.playerLayer.player !== self.player || (self.everPlayed && !self.view.playerLayer.isReadyForDisplay) {
+                    self.reattachLayer()
+                }
+                self.refreshLayout()
+            }
+        }
+    }
+
+    private var foregroundObserver: NSObjectProtocol?
+    private var notReadySince: Date?
+    private var lastReattach = Date.distantPast
+
+    /// Detach and re-attach the layer so the picture comes back if it got disconnected (not while in PiP)
+    private func reattachLayer() {
+        guard pip?.isPictureInPictureActive != true else { return }
+        lastReattach = Date()
+        let gravity = view.playerLayer.videoGravity
+        view.playerLayer.player = nil
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = gravity == .resize ? .resizeAspect : gravity
     }
 
     func load(url: URL, headers: [String: String], startAt: Double) {
@@ -153,6 +186,18 @@ final class NativeEngine: NSObject, PlaybackEngine {
             if player.timeControlStatus == .playing { everPlayed = true }
         }
 
+        // Watchdog: time advances and the video has a picture, but the layer shows nothing for ~2s: re-attach it
+        if everPlayed, player.timeControlStatus == .playing, videoSize != .zero,
+           !view.playerLayer.isReadyForDisplay, pip?.isPictureInPictureActive != true {
+            if notReadySince == nil { notReadySince = Date() }
+            if let since = notReadySince, Date().timeIntervalSince(since) > 2, Date().timeIntervalSince(lastReattach) > 4 {
+                reattachLayer()
+                notReadySince = nil
+            }
+        } else {
+            notReadySince = nil
+        }
+
         if let end = duration, end > 0, t.isFinite, t >= end - 0.3, player.timeControlStatus != .playing, readyAt != nil, everPlayed {
             state = .ended
             isBuffering = false
@@ -222,8 +267,23 @@ final class NativeEngine: NSObject, PlaybackEngine {
         return nil
     }
 
+    /// للترجمة: وقت AVPlayer الحي مباشرة
+    var liveTime: Double {
+        if seekingToStart { return elapsed }
+        let t = player.currentTime().seconds
+        return t.isFinite && t >= 0 ? t : elapsed
+    }
+
+    func refreshLayout() {
+        // الحجم الأصلي أو التكبير: الاثنين يحافظون على النسبة (resizeAspect / resizeAspectFill)، ما نستخدم resize أبد
+        if view.playerLayer.videoGravity == .resize { view.playerLayer.videoGravity = .resizeAspect }
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+    }
+
     func play() {
         wantsPlay = true
+        AudioSessionKeeper.shared.activate()
         if state == .ended { seek(to: 0) }
         player.playImmediately(atRate: rate)
         if readyAt != nil { state = .playing }
@@ -252,6 +312,8 @@ final class NativeEngine: NSObject, PlaybackEngine {
     func shutdown() {
         tick?.cancel()
         tick = nil
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        foregroundObserver = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
         pip?.delegate = nil

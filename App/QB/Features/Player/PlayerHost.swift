@@ -369,15 +369,18 @@ struct PlayerHost: View {
             }
             .foregroundStyle(.white)
             Spacer(minLength: 8)
-            if player.supportsAirPlay {
-                AirPlayButton()
-                    .frame(width: 42, height: 42)
-                    .glassEffect(Glass.player.interactive(), in: .circle)
-                    .accessibilityLabel(L("AirPlay"))
+            // Always in place (no jumping while loading switches engines); dimmed when the settled engine can't do it
+            AirPlayButton()
+                .frame(width: 42, height: 42)
+                .glassEffect(Glass.player.interactive(), in: .circle)
+                .accessibilityLabel(L("AirPlay"))
+                .disabled(!player.settledSupportsAirPlay)
+                .opacity(player.settledSupportsAirPlay ? 1 : 0.35)
+            GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة"), clear: true) {
+                touch { if player.supportsPiP { player.startPiP() } }
             }
-            if player.supportsPiP {
-                GlassCircleButton(systemImage: "pip.enter", size: 42, label: L("صورة داخل صورة"), clear: true) { touch { player.startPiP() } }
-            }
+            .disabled(!player.settledSupportsPiP)
+            .opacity(player.settledSupportsPiP ? 1 : 0.35)
             GlassCircleButton(systemImage: "rotate.right", size: 42, label: L("تدوير الشاشة"), clear: true) { touch { player.toggleOrientation() } }
             GlassCircleButton(systemImage: "xmark", size: 42, label: L("إغلاق"), clear: true) { player.close() }
         }
@@ -458,16 +461,29 @@ struct PlayerHost: View {
                 if scrubbing { hideTask?.cancel() } else { scheduleHide() }
             }
             HStack(spacing: 10) {
-                pill(L("الترجمة والصوت"), "captions.bubble.fill") { sheet = .tracks }
-                pill(L("المصادر"), "rectangle.stack.fill") { sheet = .sources }
-                pill(rateLabel, "gauge.with.dots.needle.67percent") { sheet = .speed }
-                if !player.similar.isEmpty {
-                    pill(L("مشابه"), "square.grid.2x2.fill") { sheet = .similar }
+                // Chips keep their full labels; when they don't fit the row scrolls instead of truncating
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        pill(L("الترجمة والصوت"), "captions.bubble.fill") { sheet = .tracks }
+                        pill(L("المصادر"), "rectangle.stack.fill") { sheet = .sources }
+                        pill(rateLabel, "gauge.with.dots.needle.67percent", reserve: [L("السرعة"), "1.75x", "0.25x"]) { sheet = .speed }
+                        // Always there; dimmed until similar titles arrive (nothing appears or shifts)
+                        pill(L("مشابه"), "square.grid.2x2.fill") { sheet = .similar }
+                            .disabled(player.similar.isEmpty)
+                            .opacity(player.similar.isEmpty ? 0.35 : 1)
+                    }
+                    .padding(.vertical, 2)
                 }
-                Spacer(minLength: 0)
-                Text(player.engineName)
-                    .font(Typo.badge)
-                    .foregroundStyle(.white.opacity(0.6))
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                // Fixed width (widest name); the name only changes once an engine actually plays
+                ZStack(alignment: .trailing) {
+                    Text(verbatim: "AVPlayer").hidden()
+                    Text(verbatim: player.settledEngineName.isEmpty ? player.engineName : player.settledEngineName)
+                }
+                .font(Typo.badge)
+                .foregroundStyle(.white.opacity(0.6))
+                .lineLimit(1)
+                .fixedSize()
             }
         }
         .foregroundStyle(.white)
@@ -477,14 +493,19 @@ struct PlayerHost: View {
         player.rate == 1 ? L("السرعة") : String(format: "%.2gx", player.rate)
     }
 
-    private func pill(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
+    /// reserve: the label's width is the widest of these, so changing it (speed) never moves the chips after it
+    private func pill(_ title: String, _ icon: String, reserve: [String] = [], action: @escaping () -> Void) -> some View {
         Button {
             hideTask?.cancel()
             action()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 13, weight: .semibold))
-                Text(title).font(Typo.caption).lineLimit(1)
+                ZStack {
+                    ForEach(reserve, id: \.self) { Text(verbatim: $0).hidden() }
+                    Text(title)
+                }
+                .font(Typo.caption).lineLimit(1).fixedSize()
             }
             .padding(.horizontal, 12)
             .frame(height: 36)

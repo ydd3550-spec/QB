@@ -71,6 +71,10 @@ protocol PlaybackEngine: AnyObject {
     /// التكبير بالإصبع: true يملّي الشاشة (يقص الأطراف)، false الحجم الأصلي بحواف سودا.
     /// viewport مقاس الشاشة كاملة، يحتاجه VLC عشان يقص على نسبتها
     func setVideoFill(_ fill: Bool, viewport: CGSize)
+    /// الوقت الحي للتشغيل الحين (للترجمة): من المشغّل نفسه مو آخر قراءة كل ربع ثانية
+    var liveTime: Double { get }
+    /// المقاس تغيّر أو رجع التطبيق: نعيد ترتيب الصورة بالنسبة الصح (الحجم الأصلي أو التكبير بالقص)
+    func refreshLayout()
 
     func startPiP()
     /// يرجّع الفيديو من الصورة للمشغّل

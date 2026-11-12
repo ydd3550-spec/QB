@@ -11,7 +11,7 @@ struct QBApp: App {
     init() {
         Typo.applyToUIKit()
         // الصوت يشتغل حتى لو الجوال على الصامت، وهذا شرط لصورة داخل صورة
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, policy: .longFormVideo)
+        AudioSessionKeeper.shared.configure()
     }
 
     var body: some Scene {
@@ -24,7 +24,10 @@ struct QBApp: App {
                 .tint(Palette.accent)
                 .preferredColorScheme(model.colorScheme)
                 .id(model.language) // تغيير اللغة يعيد رسم النصوص كلها
-                .task { await model.start() }
+                .task {
+                    model.player.hookAudioSession()
+                    await model.start()
+                }
                 .onOpenURL { model.handle(url: $0) }
                 .onReceive(NotificationCenter.default.publisher(for: .qbPendingIntent)) { _ in model.runPendingIntent() }
         }

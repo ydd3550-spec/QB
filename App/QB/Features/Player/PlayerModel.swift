@@ -61,6 +61,14 @@ final class PlayerModel {
     /// آخر مصدر دوّرنا الشاشة له تلقائيًا، عشان ما نعاند المستخدم لو رجّعها عمودي
     private var autoRotatedFor: String?
     private(set) var engineName = ""
+    /// The engine shown in the controls (label, PiP, AirPlay): only changes once a picture plays,
+    /// so the controls don't jump while loading tries AVPlayer then VLC
+    private(set) var settledEngineName = ""
+    private(set) var settledSupportsPiP = false
+    private(set) var settledSupportsAirPlay = false
+    /// AVPlayer already couldn't play a source of this title: the next sources start straight in VLC
+    /// (before: every source went AVPlayer -> VLC -> next source AVPlayer -> VLC ...)
+    private var nativeFailedThisTitle = false
     private(set) var errorMessage: String?
     /// تفاصيل الفشل الحقيقية (المشغّل، السبب، الموقع، رد السيرفر) تطلع تحت الرسالة ومعها زر نسخ
     private(set) var failureDetail: String?
@@ -121,6 +129,7 @@ final class PlayerModel {
         triedSources = []
         autoAdvances = 0
         freshRetried = []
+        nativeFailedThisTitle = false
         lastKnownDuration = ((try? core?.progress(mediaId: context.ref.id)) ?? nil)?.durationS
         failureLog = []
         failureDetail = nil
@@ -187,6 +196,7 @@ final class PlayerModel {
                 return
             }
             let useVLC = forceVLC || source.engine == .vlc || app?.preferredEngine == "vlc"
+                || nativeFailedThisTitle
             let engine: any PlaybackEngine = useVLC ? VLCEngine() : makeNative()
             wire(engine)
             self.engine = engine
@@ -259,6 +269,7 @@ final class PlayerModel {
         case .nativeCannotPlay:
             // الأصلي ما قدر: نحفظ إن هذا المصدر يحتاج VLC ونحوّل من نفس الثانية
             try? core?.markSourceFailed(sourceId: source.id, nativeFailed: true)
+            nativeFailedThisTitle = true
             app?.showToast(L("نحوّل لمشغّل VLC"))
             start(source, startAt: position, forceVLC: true)
         case .sourceFailed:
@@ -579,6 +590,26 @@ final class PlayerModel {
         NowPlaying.shared.clear()
     }
 
+    private var playingBeforeInterruption = false
+
+    /// Calls / alarms / unplugged headphones
+    func hookAudioSession() {
+        let keeper = AudioSessionKeeper.shared
+        keeper.onInterruptionBegan = { [weak self] in
+            guard let self else { return }
+            self.playingBeforeInterruption = self.isPlaying
+        }
+        keeper.onInterruptionEnded = { [weak self] shouldResume in
+            guard let self, self.engine != nil else { return }
+            if shouldResume, self.playingBeforeInterruption, !self.isPlaying { self.engine?.play() }
+            self.playingBeforeInterruption = false
+        }
+        keeper.onOutputLost = { [weak self] in
+            guard let self, self.engine != nil, self.isPlaying else { return }
+            self.pause()
+        }
+    }
+
     func scenePhaseChanged(_ phase: ScenePhase) {
         guard engine != nil else { return }
         switch phase {
@@ -587,6 +618,9 @@ final class PlayerModel {
             // VLC ما يدعم صورة داخل صورة، نوقفه بدل ما يرسم بالخلفية
             if engineName == "VLC" { pause() }
         case .active:
+            AudioSessionKeeper.shared.activate(force: true)
+            engine?.refreshLayout()
+            sync()
             // رجعت للتطبيق والفيديو بالصورة: نرجّعه للمشغّل بنفس المكان وهو شغّال
             if pipActive {
                 miniHidden = false
@@ -603,9 +637,12 @@ final class PlayerModel {
     private func startTicking() {
         tickTask?.cancel()
         tickTask = Task { [weak self] in
+            var beat = 0
             while !Task.isCancelled {
-                self?.sync()
-                try? await Task.sleep(for: .milliseconds(250))
+                // Subtitles every 100 ms from the live clock; the rest of the state every 200 ms
+                if beat % 2 == 0 { self?.sync() } else { self?.updateCue() }
+                beat &+= 1
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
     }
@@ -638,6 +675,7 @@ final class PlayerModel {
         state = s
         switch s {
         case .playing:
+            settleEngine()
             if !reportedOk { reportFirstPlay() }
         case .paused:
             saveProgress(force: true)
@@ -646,6 +684,13 @@ final class PlayerModel {
         default:
             break
         }
+    }
+
+    private func settleEngine() {
+        guard let engine else { return }
+        if settledEngineName != engine.kindName { settledEngineName = engine.kindName }
+        if settledSupportsPiP != engine.supportsPiP { settledSupportsPiP = engine.supportsPiP }
+        if settledSupportsAirPlay != engine.supportsAirPlay { settledSupportsAirPlay = engine.supportsAirPlay }
     }
 
     /// أول ما يشتغل: نحفظ إن المصدر شغال بهالمشغّل، ونضيفه للسجل
@@ -893,8 +938,10 @@ final class PlayerModel {
         updateCue()
     }
 
+    /// Subtitles follow the player's live clock (not the last 250 ms poll), with the user's sync offset kept
     private func updateCue() {
-        let text = CueIndex.text(in: cues, at: elapsed, offset: subtitleOffset)
+        let now = engine?.liveTime ?? elapsed
+        let text = CueIndex.text(in: cues, at: now.isFinite ? now : elapsed, offset: subtitleOffset)
         if text != cueText { cueText = text }
     }
 
