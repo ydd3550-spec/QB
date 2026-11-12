@@ -35,7 +35,7 @@ set -o pipefail
 xcodebuild test -workspace QB.xcworkspace -scheme QBShots -destination "id=$UDID" \
   -derivedDataPath build/DD -resultBundlePath build/shots.xcresult \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
-  2>&1 | tee build/shots-test.log | grep -E "TOUR:|error:|Test Case|TEST (SUCCEEDED|FAILED)|\*\* " | grep -v "debugDescription" | cut -c1-400
+  2>&1 | tee build/shots-test.log | grep -E "TOUR:|error:|Test Case|TEST (SUCCEEDED|FAILED)|\*\* " | grep -v "debugDescription" | cut -c1-200
 echo "xcodebuild exit: ${PIPESTATUS[0]}"
 
 xcrun xcresulttool export attachments --path build/shots.xcresult --output-path build/shots/raw \
@@ -59,6 +59,6 @@ fi
 
 # سجل الجهاز للتشخيص
 xcrun simctl spawn "$UDID" log show --last 20m --predicate 'subsystem == "app.qb"' --style compact > build/shots/app-log.txt 2>&1 || true
-grep -E "TOUR:" build/shots-test.log | grep -v "^ *$" | cut -c1-300 > build/shots/tour.txt || true
+grep -E "TOUR:" build/shots-test.log | grep -v "^ *$" | cut -c1-2000 > build/shots/tour.txt || true
 
 cd build && rm -f shots.zip && zip -qr shots.zip shots shots-test.log && ls -la shots.zip
