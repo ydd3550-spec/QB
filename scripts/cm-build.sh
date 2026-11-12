@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KEY_FILE="${CM_KEY_FILE:-$HOME/.qbci/cm}"
-APP_ID="${CM_APP_ID:-6af57b73c2ee784c332d3589}"      # تطبيق QB في Codemagic
+APP_ID="${CM_APP_ID:-6af57cfb40c6af4c9b1ed739}"      # تطبيق QB في Codemagic
 WORKFLOW="${CM_WORKFLOW:-qb-unsigned-ipa}"
 BRANCH="${1:-main}"
 RUN_TESTS="${2:-0}"
