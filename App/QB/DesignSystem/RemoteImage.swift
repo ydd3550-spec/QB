@@ -61,6 +61,12 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
         return UIImage(cgImage: cg)
     }
 
+    /// صورة جاهزة (من القرص مثلًا) تنحط بالكاش عشان تطلع على طول
+    func store(_ image: UIImage, for url: URL, maxPixel: CGFloat) {
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        memory.setObject(image, forKey: key(url, maxPixel), cost: cost)
+    }
+
     func clearMemory() { memory.removeAllObjects() }
 
     func clearDisk() { session.configuration.urlCache?.removeAllCachedResponses() }

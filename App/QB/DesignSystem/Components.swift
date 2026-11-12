@@ -356,3 +356,23 @@ extension View {
         }
     }
 }
+
+
+/// كم سحبت لتحت فوق أول الصفحة (صفر وقت التمرير العادي). الصورة اللي فوق تتمطّط بهالمقدار
+struct OverscrollReader: ViewModifier {
+    @Binding var pull: CGFloat
+
+    func body(content: Content) -> some View {
+        content.onScrollGeometryChange(for: CGFloat.self) { geo in
+            max(0, -(geo.contentOffset.y + geo.contentInsets.top))
+        } action: { _, new in
+            // نقرّب لنص نقطة عشان ما نحدّث الواجهة على فروقات ما تنشاف
+            let v = (new * 2).rounded() / 2
+            if v != pull { pull = v }
+        }
+    }
+}
+
+extension View {
+    func trackOverscroll(_ pull: Binding<CGFloat>) -> some View { modifier(OverscrollReader(pull: pull)) }
+}

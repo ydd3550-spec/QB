@@ -305,6 +305,18 @@ final class PlayerModel {
         sync()
     }
 
+    /// من شاشة القفل / السماعات
+    func resumeFromRemote() {
+        guard let engine, !isPlaying else { return }
+        engine.play()
+        sync()
+    }
+
+    func pauseFromRemote() {
+        guard isPlaying else { return }
+        togglePlay()
+    }
+
     func pause() {
         engine?.pause()
         saveProgress(force: true)
@@ -437,6 +449,7 @@ final class PlayerModel {
         engine?.shutdown()
         engine = nil
         pipActive = false
+        NowPlaying.shared.clear()
     }
 
     func scenePhaseChanged(_ phase: ScenePhase) {
@@ -476,6 +489,12 @@ final class PlayerModel {
         let shouldOffer = waiting && Date().timeIntervalSince(loadingSince) > 5
         if showTryAnother != shouldOffer { showTryAnother = shouldOffer }
         if isPlaying { saveProgress(force: false) }
+        if let context {
+            NowPlaying.shared.attach(self)
+            NowPlaying.shared.update(title: context.title, subtitle: context.subtitle,
+                                     artworkURL: context.meta?.poster ?? context.ref.poster,
+                                     elapsed: elapsed, duration: duration, playing: isPlaying)
+        }
     }
 
     private func engineStateChanged(_ s: PlaybackState) {

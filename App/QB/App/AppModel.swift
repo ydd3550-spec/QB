@@ -79,6 +79,7 @@ final class AppModel {
         await reloadAddons()
         if seeded > 0 { addonsVersion += 1 }
         ready = true
+        runPendingIntent()
         refreshContinueWatching()
     }
 
@@ -189,6 +190,24 @@ final class AppModel {
                 tab = .home
                 paths[.home] = NavigationPath([MediaRef(id: id, kind: kind, name: name)])
             }
+        }
+    }
+
+    /// اختصار من Siri أو تطبيق الاختصارات
+    func runPendingIntent() {
+        guard let intent = PendingIntent.take() else { return }
+        switch intent {
+        case .search:
+            select(.search)
+        case .library:
+            select(.library)
+        case .resume:
+            // النواة لسا ما اشتغلت: نرجّع الطلب ويتنفّذ أول ما تجهز
+            guard core != nil, ready else { PendingIntent.resume.store(); return }
+            if continueWatching.isEmpty { refreshContinueWatching() }
+            guard let p = continueWatching.first else { select(.library); return }
+            tab = .home
+            paths[.home] = NavigationPath([MediaRef(id: p.mediaId, kind: p.kind, name: p.title, poster: p.poster)])
         }
     }
 

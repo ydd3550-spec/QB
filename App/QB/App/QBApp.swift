@@ -26,8 +26,10 @@ struct QBApp: App {
                 .id(model.language) // تغيير اللغة يعيد رسم النصوص كلها
                 .task { await model.start() }
                 .onOpenURL { model.handle(url: $0) }
+                .onReceive(NotificationCenter.default.publisher(for: .qbPendingIntent)) { _ in model.runPendingIntent() }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.runPendingIntent() }
             model.player.scenePhaseChanged(phase)
             if phase == .background { model.refreshWidget() }
         }

@@ -17,9 +17,12 @@ struct HomeView: View {
                     LazyVStack(alignment: .leading, spacing: 30) {
                         Color.clear.frame(height: 0).id("top")
                         if let hero = heroItem {
-                            HeroBanner(item: hero, namespace: zoom)
-                        } else if loading {
-                            SkeletonBlock(cornerRadius: 0).frame(height: 520)
+                            HeroBanner(item: hero, namespace: zoom, pull: pull)
+                                .id(hero.id)
+                                .transition(.opacity)
+                        } else if loading || !app.ready {
+                            HeroPlaceholder()
+                                .transition(.opacity)
                         }
 
                         if !app.continueWatching.isEmpty {
@@ -44,7 +47,9 @@ struct HomeView: View {
                     }
                     .padding(.bottom, 40)
                 }
-                .ignoresSafeArea(edges: heroItem == nil ? [] : .top)
+                .ignoresSafeArea(edges: (heroItem == nil && !loading && app.ready) ? [] : .top)
+                .trackOverscroll($pull)
+                .animation(.smooth(duration: 0.45), value: heroItem?.id)
                 .scrollIndicators(.hidden)
                 .onChange(of: app.scrollToTop[.home]) { _, _ in
                     withAnimation(Motion.soft) { proxy.scrollTo("top", anchor: .top) }
@@ -64,8 +69,18 @@ struct HomeView: View {
         }
     }
 
-    /// أول عمل له خلفية عريضة من أول رف
+    /// السحب لتحت فوق البانر: الصورة تتمطّط وتعبّي الفراغ
+    @State private var pull: CGFloat = 0
+
+    /// آخر بانر محفوظ: يطلع أول ما يفتح التطبيق لين توصل الرفوف
+    @State private var cachedHero: MetaPreview? = HeroCache.loadAndWarm()
+
+    /// أول عمل له خلفية عريضة من أول رف (أو المحفوظ لين توصل)
     private var heroItem: MetaPreview? {
+        freshHero ?? cachedHero
+    }
+
+    private var freshHero: MetaPreview? {
         rows.first?.items.first(where: { $0.background != nil }) ?? rows.first?.items.first
     }
 
@@ -77,7 +92,12 @@ struct HomeView: View {
         error = nil
         do {
             let result = try await core.homeRows()
-            withAnimation(Motion.standard) { rows = result.filter { !$0.items.isEmpty } }
+            let fresh = result.filter { !$0.items.isEmpty }
+            // نحفظ البانر وصورته للمرة الجاية (بالخلفية، ما نأخر الرفوف)
+            if let first = fresh.first, let hero = first.items.first(where: { $0.background != nil }) ?? first.items.first {
+                HeroCache.save(hero)
+            }
+            withAnimation(Motion.standard) { rows = fresh }
             loadedVersion = app.addonsVersion
         } catch is CancellationError {
             return
@@ -93,16 +113,21 @@ struct HeroBanner: View {
     @Environment(AppModel.self) private var app
     let item: MetaPreview
     let namespace: Namespace.ID
+    var pull: CGFloat = 0
 
     var body: some View {
         let ref = MediaRef(item, zoomID: "hero-\(item.id)")
         NavigationLink(value: ref) {
             ZStack(alignment: .bottomLeading) {
+                // الصورة لين أعلى الشاشة (ورا شريط الحالة)، ولما تسحب لتحت تطول لفوق من تحت وتعبّي الفراغ
                 Color.clear
                     .frame(height: 540)
-                    .overlay { RemoteImage(url: item.background ?? item.poster, maxPixel: 1400) }
-                    .clipped()
-                    .overlay(alignment: .top) { Palette.topScrim.frame(height: 140) }
+                    .overlay(alignment: .bottom) {
+                        HeroImage(url: item.background ?? item.poster)
+                            .frame(height: 540 + pull)
+                            .clipped()
+                            .overlay(alignment: .top) { Palette.topScrim.frame(height: 140) }
+                    }
                     .overlay(alignment: .bottom) { Palette.scrim.frame(height: 300) }
 
                 VStack(alignment: .leading, spacing: 12) {
@@ -175,7 +200,7 @@ struct Shelf: View {
                                 .matchedTransitionSource(id: ref.zoomID, in: namespace)
                         }
                         .buttonStyle(.plain)
-                        .contextMenu { MediaContextMenu(ref: ref) }
+                        .contextMenu { MediaContextMenu(ref: ref) } preview: { MediaPreviewCard(ref: ref) }
                     }
                 }
                 .scrollTargetLayout()
@@ -199,6 +224,32 @@ struct MediaContextMenu: View {
         } label: {
             Label(saved ? L("شل من مكتبتي") : L("أضف لمكتبتي"), systemImage: saved ? "minus.circle" : "plus.circle")
         }
+        if let link = URL(string: "qb://title/\(ref.kind.wire)/\(ref.id)") {
+            ShareLink(item: link, subject: Text(ref.name)) {
+                Label(L("مشاركة"), systemImage: "square.and.arrow.up")
+            }
+        }
+    }
+}
+
+/// معاينة الضغط الطويل: البوستر كبير بزوايا ناعمة والاسم تحته (مثل تطبيقات أبل)
+struct MediaPreviewCard: View {
+    let ref: MediaRef
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Color.clear
+                .aspectRatio(2/3, contentMode: .fit)
+                .overlay { RemoteImage(url: ref.poster, maxPixel: 600) }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Text(ref.name)
+                .font(Typo.bodyMedium)
+                .lineLimit(2)
+                .padding(.horizontal, 4)
+        }
+        .padding(12)
+        .frame(width: 260)
+        .background(Palette.surface)
     }
 }
 

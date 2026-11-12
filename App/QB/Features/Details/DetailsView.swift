@@ -10,6 +10,8 @@ struct DetailsView: View {
 
     @State private var meta: MetaDetail?
     @State private var error: String?
+    /// السحب لتحت فوق الخلفية
+    @State private var pull: CGFloat = 0
     @State private var loading = true
     @State private var similar: [MetaPreview] = []
     @State private var season: UInt32?
@@ -58,6 +60,7 @@ struct DetailsView: View {
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(edges: .top)
+        .trackOverscroll($pull)
         .qbScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -149,11 +152,15 @@ struct DetailsView: View {
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
+            // الخلفية من حافة لحافة لين فوق شريط الحالة، وتتمطّط لفوق لما تسحب
             Color.clear
                 .frame(height: 470)
-                .overlay { RemoteImage(url: meta?.background ?? ref.background ?? meta?.poster ?? ref.poster, maxPixel: 1400) }
-                .clipped()
-                .overlay(alignment: .top) { Palette.topScrim.frame(height: 130) }
+                .overlay(alignment: .bottom) {
+                    RemoteImage(url: meta?.background ?? ref.background ?? meta?.poster ?? ref.poster, maxPixel: 1400)
+                        .frame(height: 470 + pull)
+                        .clipped()
+                        .overlay(alignment: .top) { Palette.topScrim.frame(height: 130) }
+                }
                 .overlay(alignment: .bottom) { Palette.scrim.frame(height: 280) }
 
             VStack(alignment: .leading, spacing: 12) {
