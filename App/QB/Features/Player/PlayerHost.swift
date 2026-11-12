@@ -16,6 +16,9 @@ struct PlayerHost: View {
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
     @State private var ripple: RippleSide?
+    /// كم ثانية تجمّعت بالضغطات المتتالية على نفس الطرف (10، 20، 30…)
+    @State private var rippleSeconds = 10
+    @State private var rippleTick = 0
     @State private var rippleTask: Task<Void, Never>?
     @State private var sheet: PlayerSheet?
 
@@ -43,7 +46,7 @@ struct PlayerHost: View {
                     .allowsHitTesting(false)
 
                 if let ripple {
-                    RippleView(side: ripple)
+                    SeekRipple(side: ripple, seconds: rippleSeconds, tick: rippleTick)
                         .allowsHitTesting(false)
                 }
 
@@ -161,11 +164,13 @@ struct PlayerHost: View {
 
     private func flash(_ side: RippleSide) {
         rippleTask?.cancel()
-        withAnimation(.easeOut(duration: 0.15)) { ripple = side }
+        rippleSeconds = PlayerLogic.nextSeekBurst(previous: ripple == side ? rippleSeconds : nil)
+        rippleTick += 1
+        withAnimation(.easeOut(duration: 0.12)) { ripple = side }
         rippleTask = Task {
-            try? await Task.sleep(for: .milliseconds(550))
+            try? await Task.sleep(for: .milliseconds(650))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) { ripple = nil }
+            withAnimation(.easeOut(duration: 0.3)) { ripple = nil }
         }
     }
 
@@ -210,12 +215,15 @@ struct PlayerHost: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                transport
-                Spacer()
                 bottomBar
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+
+            // أزرار الوسط بنص الفيديو بالضبط (الفيديو نفسه يغطي الشاشة كلها)، مو بين الشريطين
+            transport
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea()
         }
     }
 
@@ -244,39 +252,33 @@ struct PlayerHost: View {
         }
     }
 
+    /// بالنص زر التشغيل/الإيقاف بس. التقديم والرجوع بضغطتين على طرف الشاشة مثل يوتيوب
     private var transport: some View {
-        GlassEffectContainer(spacing: 24) {
-            HStack(spacing: 30) {
-                GlassCircleButton(systemImage: "gobackward.10", size: 46, label: L("رجوع 10 ثواني"), clear: true) {
-                    touch { player.skip(-10) }
-                }
-                Button {
-                    touch { player.togglePlay() }
-                } label: {
-                    ZStack {
-                        // مؤشر التحميل الوحيد بالشاشة يكون هنا داخل الزر
-                        if showsSpinner {
-                            ProgressView().controlSize(.regular).tint(.white)
-                        } else {
-                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 26, weight: .bold))
-                                .contentTransition(.symbolEffect(.replace))
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .frame(width: 66, height: 66)
-                    .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .glassEffect(.clear.interactive(), in: .circle)
-                .accessibilityLabel(player.isPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
-                GlassCircleButton(systemImage: "goforward.10", size: 46, label: L("تقديم 10 ثواني"), clear: true) {
-                    touch { player.skip(10) }
+        Button {
+            touch { player.togglePlay() }
+        } label: {
+            ZStack {
+                // مؤشر التحميل الوحيد بالشاشة يكون هنا داخل الزر
+                if showsSpinner {
+                    ProgressView().controlSize(.small).tint(.white)
+                } else {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: PlayerLogic.Transport.play * 0.4, weight: .bold))
+                        // المثلث وزنه على اليسار، نزحزحه شوي عشان يبان بالنص
+                        .offset(x: player.isPlaying ? 0 : PlayerLogic.Transport.play * 0.04)
+                        .contentTransition(.symbolEffect(.replace))
                 }
             }
+            .foregroundStyle(.white)
+            .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
+            .contentShape(Circle())
         }
+        .buttonStyle(.plain)
+        .glassEffect(.clear.interactive(), in: .circle)
+        .accessibilityLabel(player.isPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
+        .accessibilityAction(named: L("رجوع 10 ثواني")) { player.skip(-10) }
+        .accessibilityAction(named: L("تقديم 10 ثواني")) { player.skip(10) }
         .environment(\.layoutDirection, .leftToRight)
-        .foregroundStyle(.white)
         .opacity(player.errorMessage == nil ? 0.92 : 0)
     }
 
@@ -372,8 +374,8 @@ struct PlayerHost: View {
             // مؤشر واحد بس: داخل زر التشغيل لما الأدوات ظاهرة، وبنفس مكانه لما تختفي
             ZStack {
                 if !controlsVisible {
-                    ProgressView().controlSize(.large).tint(.white)
-                        .frame(width: 66, height: 66)
+                    ProgressView().controlSize(.small).tint(.white)
+                        .frame(width: PlayerLogic.Transport.play, height: PlayerLogic.Transport.play)
                         .glassEffect(.clear, in: .circle)
                         .transition(.opacity)
                 }
@@ -530,23 +532,65 @@ struct SubtitleOverlay: View {
 }
 
 /// أثر الضغط مرتين على الطرف
-struct RippleView: View {
+/// تقديم/رجوع مثل يوتيوب: قوس شفاف على طرف الشاشة وأسهم صغيرة وعدد الثواني، بدون زر
+struct SeekRipple: View {
     let side: PlayerHost.RippleSide
+    let seconds: Int
+    let tick: Int
+
     var body: some View {
-        HStack {
-            if side == .forward { Spacer() }
-            VStack(spacing: 6) {
-                Image(systemName: side == .forward ? "goforward.10" : "gobackward.10").font(.system(size: 30, weight: .semibold))
-                Text(L("10 ثواني")).font(Typo.caption)
+        GeometryReader { geo in
+            let forward = side == .forward
+            let w = geo.size.width * PlayerLogic.rippleWidthFraction
+            ZStack {
+                // القوس: دائرة كبيرة طالعة برا الطرف، يبان منها نص قوس
+                Ellipse()
+                    .fill(.white.opacity(0.10))
+                    .frame(width: w * 2, height: geo.size.height * 1.3)
+                    .position(x: forward ? geo.size.width : 0, y: geo.size.height / 2)
+
+                VStack(spacing: 6) {
+                    Chevrons(forward: forward, tick: tick)
+                    Text(L("%@ ثانية", "\(seconds)"))
+                        .font(Typo.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.5), radius: 3)
+                }
+                .frame(width: w)
+                .position(x: forward ? geo.size.width - w * 0.5 : w * 0.5, y: geo.size.height / 2)
             }
-            .foregroundStyle(.white)
-            .frame(width: 130, height: 130)
-            .glassEffect(.regular, in: .circle)
-            .padding(.horizontal, 50)
-            if side == .back { Spacer() }
+            .clipped()
         }
+        .ignoresSafeArea()
         .environment(\.layoutDirection, .leftToRight)
         .transition(.opacity)
+    }
+}
+
+/// ثلاث أسهم صغيرة تنوّر وحدة ورا الثانية مع كل ضغطة
+private struct Chevrons: View {
+    let forward: Bool
+    let tick: Int
+    @State private var phase = 0
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(0..<3, id: \.self) { i in
+                let idx = forward ? i : 2 - i
+                Image(systemName: "play.fill")
+                    .scaleEffect(x: forward ? 1 : -1)
+                    .font(.system(size: 11, weight: .bold))
+                    .opacity(phase == idx ? 1 : 0.35)
+            }
+        }
+        .foregroundStyle(.white)
+        .task(id: tick) {
+            for step in 0..<3 {
+                withAnimation(.easeOut(duration: 0.12)) { phase = step }
+                try? await Task.sleep(for: .milliseconds(140))
+            }
+        }
     }
 }
 
