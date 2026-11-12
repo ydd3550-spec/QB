@@ -31,10 +31,16 @@ struct SearchView: View {
             .navigationTitle(L("البحث"))
             .searchable(text: $query, prompt: Text(L("أفلام، مسلسلات…")))
             .onSubmit(of: .search) { saveRecent(query) }
+            // فتحت نتيجة من هالبحث: نحفظه
+            .onChange(of: app.paths[.search]?.count ?? 0) { old, new in
+                if new > old, old == 0 { saveRecent(query) }
+            }
             .task(id: query) { await search() }
             .onAppear { loadRecents() }
             .mediaDestinations(zoom)
         }
+        // تسحب من طرف الشاشة وترجع للصفحة اللي كنت فيها قبل البحث، بنفس مكانك فيها
+        .edgeSwipeBack(enabled: (app.paths[.search]?.isEmpty ?? true)) { app.goBackFromSearch() }
     }
 
     @ViewBuilder
@@ -120,22 +126,25 @@ struct SearchView: View {
         if let e = await work.value, !(e is CancellationError) { error = CoreClient.message(for: e) }
         searched = q
         searching = false
-        if !rows.isEmpty { saveRecent(q) }
     }
 
     private func loadRecents() {
         guard let raw = (try? app.core?.setting(key: "recent_searches")) ?? nil,
               let data = raw.data(using: .utf8),
               let list = try? JSONDecoder().decode([String].self, from: data) else { return }
-        recents = list
+        recents = SearchHistory.cleaned(list)
+        if recents != list { persistRecents() }
     }
 
     private func saveRecent(_ q: String) {
-        let t = q.trimmingCharacters(in: .whitespaces)
-        guard t.count >= 2 else { return }
-        recents.removeAll { $0.caseInsensitiveCompare(t) == .orderedSame }
-        recents.insert(t, at: 0)
-        recents = Array(recents.prefix(12))
+        // ينحفظ بس لما تضغط بحث أو تفتح نتيجة، مو وقت الكتابة
+        let next = SearchHistory.adding(q, to: recents)
+        guard next != recents else { return }
+        recents = next
+        persistRecents()
+    }
+
+    private func persistRecents() {
         if let data = try? JSONEncoder().encode(recents), let s = String(data: data, encoding: .utf8) {
             app.save("recent_searches", s)
         }

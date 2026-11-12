@@ -49,6 +49,11 @@ public enum PlayerLogic {
         return .dismiss
     }
 
+    /// سحب الرجوع من الطرف: ثلث الشاشة أو رمية سريعة لنصها
+    public static func edgeSwipeCompletes(progress: CGFloat, predicted: CGFloat, width: CGFloat) -> Bool {
+        progress > width * 0.33 || predicted > width * 0.5
+    }
+
     /// الفيديو عرضي بوضوح (ندوّر له الشاشة أفقي)
     public static func isLandscapeVideo(_ size: CGSize) -> Bool {
         size.width > 0 && size.height > 0 && size.width > size.height * 1.15

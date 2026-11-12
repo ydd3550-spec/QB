@@ -61,6 +61,12 @@ struct PlayerLogicTests {
         #expect(PlayerLogic.verticalDrag(startX: 100, startY: 20, size: size) == .dismiss)
     }
 
+    @Test func edgeSwipeBackThreshold() {
+        #expect(PlayerLogic.edgeSwipeCompletes(progress: 150, predicted: 150, width: 400))
+        #expect(PlayerLogic.edgeSwipeCompletes(progress: 60, predicted: 260, width: 400))
+        #expect(!PlayerLogic.edgeSwipeCompletes(progress: 60, predicted: 100, width: 400))
+    }
+
     @Test func swipeThreshold() {
         #expect(PlayerLogic.swipeDismisses(translation: 200, predicted: 200))
         #expect(PlayerLogic.swipeDismisses(translation: 60, predicted: 500))

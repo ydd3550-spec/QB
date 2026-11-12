@@ -146,8 +146,19 @@ final class AppModel {
                 scrollToTop[newTab, default: 0] += 1
             }
         } else {
+            if newTab == .search { tabBeforeSearch = tab }
             tab = newTab
         }
+    }
+
+    /// التبويب اللي كنت فيه قبل البحث (السحب من الطرف يرجّعك له بنفس حالته)
+    private(set) var tabBeforeSearch: AppTab = .home
+
+    func goBackFromSearch() {
+        guard tab == .search else { return }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { tab = tabBeforeSearch }
     }
 
     func binding(for t: AppTab) -> Binding<NavigationPath> {
