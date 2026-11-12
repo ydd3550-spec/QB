@@ -151,6 +151,8 @@ final class VLCEngine: PlaybackEngine {
     private var opened = false
     private var wantsPlay = true
     private var wantedRate: Float = 1
+    /// صوت VLC نفسه (0…1)، احتياط لو صوت الجهاز ما تغيّر
+    private var wantedVolume: Float = 1
     private var maxSeen: Double = 0
     private var loadStarted = Date()
     private var lastTrackCheck = Date.distantPast
@@ -354,6 +356,7 @@ final class VLCEngine: PlaybackEngine {
                 AudioSessionKeeper.shared.activate()
                 self.player.play()
                 if self.wantedRate != 1 { self.player.rate = self.wantedRate }
+                if self.wantedVolume < 1 { self.player.audio?.volume = Int32((self.wantedVolume * 100).rounded()) }
                 self.applyCrop()
             }
         }
@@ -588,9 +591,11 @@ final class VLCEngine: PlaybackEngine {
         }
         let box = UncheckedBox(player)
         let rate = wantedRate
+        let volume = wantedVolume
         commands.async {
             box.value.play()
             if rate != 1 { box.value.rate = rate }
+            if volume < 1 { box.value.audio?.volume = Int32((volume * 100).rounded()) }
         }
         if hasPlayed { state = .playing }
     }
@@ -618,6 +623,14 @@ final class VLCEngine: PlaybackEngine {
             guard box.value.isSeekable else { return }
             box.value.time = VLCTime(int: ms)
         }
+    }
+
+    func setVolume(_ volume: Float) {
+        wantedVolume = volume
+        guard started, !shutDown else { return }
+        let box = UncheckedBox(player)
+        let v = Int32((min(max(volume, 0), 1) * 100).rounded())
+        commands.async { box.value.audio?.volume = v }
     }
 
     func setRate(_ rate: Float) {

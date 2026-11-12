@@ -25,6 +25,7 @@ struct RootView: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .modifier(MiniPlayerAccessory(visible: model.player.showsMini))
+        .modifier(BehindPlayerEffect(player: model.player))
         .fullScreenCover(isPresented: $player.isPresented, onDismiss: { model.player.didDismiss() }) {
             PlayerHost()
                 .environment(model)
@@ -120,5 +121,24 @@ extension View {
     /// مسافة تحت آخر المحتوى بقد المشغّل الصغير، عشان آخر سطر ينسحب فوقه وما يتغطّى
     func miniPlayerInset(_ visible: Bool) -> some View {
         safeAreaPadding(.bottom, visible ? 64 : 0)
+    }
+}
+
+/// الصفحة اللي ورا المشغّل: صغيرة شوي ومعتّمة وهو فوقها، وتكبر وتنوّر مع ما تسحبه لتحت (مثل شيتات iOS).
+/// تحويل رسم بس، فالصفحة ما ينعاد ترتيبها ولا تنبني من جديد
+private struct BehindPlayerEffect: ViewModifier {
+    let player: PlayerModel
+
+    func body(content: Content) -> some View {
+        let p = player.isPresented ? player.dismissProgress : 1
+        let scale = 0.94 + 0.06 * p
+        content
+            .visualEffect { c, _ in c.scaleEffect(scale) }
+            .overlay {
+                Color.black.opacity(0.4 * (1 - p))
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+            .animation(Motion.soft, value: player.isPresented)
     }
 }

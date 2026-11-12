@@ -40,7 +40,7 @@ struct SearchView: View {
             .mediaDestinations(zoom)
         }
         // تسحب من طرف الشاشة وترجع للصفحة اللي كنت فيها قبل البحث، بنفس مكانك فيها
-        .edgeSwipeBack(enabled: (app.paths[.search]?.isEmpty ?? true)) { app.goBackFromSearch() }
+        .edgeSwipeBack(enabled: (app.paths[.search]?.isEmpty ?? true), backdrop: app.searchBackdrop) { app.goBackFromSearch() }
     }
 
     @ViewBuilder

@@ -414,9 +414,9 @@ struct PrimaryPressStyle: ButtonStyle {
 extension View {
     /// شريط علوي زجاجي: العنوان ينقرا لما يمر المحتوى تحته
     func qbNavBar() -> some View {
+        // شريط العنوان الأصلي في iOS 26: شفاف، والتمويه الناعم يطلع بس لما المحتوى يمر تحته.
+        // قبل كان فيه خلفية زجاج ثابتة دايم ظاهرة، فتطلع فوق الصفحة رقعة فاضية كبيرة
         self
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
             .scrollEdgeEffectStyle(.soft, for: .top)
     }
 }

@@ -138,11 +138,13 @@ struct SettingsView: View {
                     Text(L("التصدير يشمل المكتبة والتقدّم والسجل والإضافات. المسح ما يلمس مكتبتك"))
                 }
 
+                // نفس باقي الصفوف بالضبط: البطاقة الرمادية، مربّع الأيقونة الذهبي، ونفس الخط والمحاذاة
                 Section {
-                    FeedbackRow()
+                    Button(action: FeedbackRow.open) {
+                        row(L("أرسل ملاحظاتك"), "paperplane.fill", trailingIcon: "arrow.up.forward")
+                    }
+                    .accessibilityLabel(L("أرسل ملاحظاتك"))
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
 
                 Section {
                     HStack {
@@ -157,6 +159,8 @@ struct SettingsView: View {
             .font(Typo.row)
             .qbScreenBackground()
             .navigationTitle(L("الإعدادات"))
+            // عنوان صغير بالنص فوق، والمحتوى يبدأ على طول تحته (بدون مساحة العنوان الكبير الفاضية)
+            .navigationBarTitleDisplayMode(.inline)
             .qbNavBar()
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
@@ -218,7 +222,7 @@ struct SettingsView: View {
         }
     }
 
-    private func row(_ title: String, _ icon: String, detail: String? = nil, destructive: Bool = false) -> some View {
+    private func row(_ title: String, _ icon: String, detail: String? = nil, destructive: Bool = false, trailingIcon: String? = nil) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
@@ -229,6 +233,12 @@ struct SettingsView: View {
             if let detail {
                 Spacer()
                 Text(detail).font(Typo.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            if let trailingIcon {
+                Spacer()
+                Image(systemName: trailingIcon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -271,43 +281,16 @@ struct LuminousGlass: View {
     }
 }
 
-/// صف «أرسل ملاحظاتك»: كبسولة داكنة وأيقونة طيارة ورق ذهبية، يفتح محادثة التلقرام الخاصة على طول
-struct FeedbackRow: View {
+/// «أرسل ملاحظاتك»: يفتح محادثة التلقرام الخاصة على طول
+enum FeedbackRow {
     static let telegramUser = "l_jii"
 
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 12) {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.accent)
-                    .frame(width: 28, height: 28)
-                    .background(Palette.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Palette.accent.opacity(0.25), lineWidth: 0.5))
-                Text(L("أرسل ملاحظاتك"))
-                    .font(Typo.row)
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 8)
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.leading, 8)
-            .padding(.trailing, 16)
-            .padding(.vertical, 7)
-            .background(Palette.surfaceRaised, in: Capsule())
-            .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 0.5))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(L("أرسل ملاحظاتك"))
-    }
-
     /// تطبيق التلقرام أول (يفتح الخاص مباشرة)، ولو مو مثبّت نفتح t.me
-    private func open() {
+    @MainActor
+    static func open() {
         Haptics.tap()
-        let app = URL(string: "tg://resolve?domain=\(Self.telegramUser)")!
-        let web = URL(string: "https://t.me/\(Self.telegramUser)")!
+        let app = URL(string: "tg://resolve?domain=\(telegramUser)")!
+        let web = URL(string: "https://t.me/\(telegramUser)")!
         UIApplication.shared.open(app, options: [:]) { ok in
             if !ok { UIApplication.shared.open(web) }
         }
@@ -380,6 +363,8 @@ struct HistoryView: View {
         .scrollContentBackground(.hidden)
         .qbScreenBackground()
         .navigationTitle(L("سجل المشاهدة"))
+        // عنوان صغير بالنص فوق، والمحتوى يبدأ على طول تحته (بدون مساحة العنوان الكبير الفاضية)
+        .navigationBarTitleDisplayMode(.inline)
         .qbNavBar()
         .overlay {
             if entries.isEmpty {

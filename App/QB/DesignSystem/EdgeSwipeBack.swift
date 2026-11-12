@@ -1,9 +1,13 @@
 import SwiftUI
+import UIKit
 import QBCore
 
-/// سحب من طرف البداية (اليمين بالعربي، اليسار بالإنجليزي) يرجّعك للصفحة اللي قبل، والصفحة تمشي مع إصبعك
+/// سحب من طرف البداية (اليمين بالعربي، اليسار بالإنجليزي) يرجّعك للصفحة اللي قبل، مثل رجوع iOS الأصلي:
+/// الصفحة تمشي مع إصبعك، والصفحة اللي قبلها تبان تحتها (تدخل من طرفها بحركة أبطأ وتنوّر)، مو سواد
 struct EdgeSwipeBack: ViewModifier {
     let enabled: Bool
+    /// شكل الصفحة اللي قبل (تنرسم تحت الصفحة وانت تسحب)
+    let backdrop: UIImage?
     let action: () -> Void
     @Environment(\.layoutDirection) private var direction
     @State private var progress: CGFloat = 0
@@ -11,10 +15,27 @@ struct EdgeSwipeBack: ViewModifier {
 
     func body(content: Content) -> some View {
         GeometryReader { geo in
-            let width = geo.size.width
+            let width = max(geo.size.width, 1)
+            let p = min(progress / width, 1)
             content
+                // ظل خفيف على حافة الصفحة اللي تمشي (مثل iOS)
+                .overlay(alignment: .leading) {
+                    if progress > 0 {
+                        LinearGradient(colors: [.clear, .black.opacity(0.22 * (1 - p))],
+                                       startPoint: direction == .rightToLeft ? .trailing : .leading,
+                                       endPoint: direction == .rightToLeft ? .leading : .trailing)
+                            .frame(width: 14)
+                            .offset(x: -14)
+                            .ignoresSafeArea()
+                            .allowsHitTesting(false)
+                    }
+                }
                 .offset(x: progress)
-                .opacity(1 - Double(min(progress / max(width, 1), 1)) * 0.25)
+                .background {
+                    if progress > 0 || leaving {
+                        underlay(width: width, p: p)
+                    }
+                }
                 .overlay(alignment: .leading) {
                     if enabled {
                         Color.clear
@@ -25,6 +46,24 @@ struct EdgeSwipeBack: ViewModifier {
                     }
                 }
         }
+    }
+
+    /// الصفحة اللي قبل: تبدأ مزحومة لطرفها ومعتّمة، وتوصل مكانها مع آخر السحب
+    @ViewBuilder
+    private func underlay(width: CGFloat, p: CGFloat) -> some View {
+        ZStack {
+            if let backdrop {
+                Image(uiImage: backdrop)
+                    .resizable()
+                    .interpolation(.high)
+            } else {
+                Color(uiColor: .systemBackground)
+            }
+            Color.black.opacity(0.18 * (1 - p))
+        }
+        .offset(x: -(width - progress) * 0.3)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     private func drag(width: CGFloat) -> some Gesture {
@@ -38,9 +77,9 @@ struct EdgeSwipeBack: ViewModifier {
                 if PlayerLogic.edgeSwipeCompletes(progress: inward(v.translation.width), predicted: inward(v.predictedEndTranslation.width), width: width) {
                     leaving = true
                     Haptics.tap()
-                    withAnimation(.easeOut(duration: 0.18)) { progress = width }
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.92)) { progress = width }
                     Task {
-                        try? await Task.sleep(for: .milliseconds(190))
+                        try? await Task.sleep(for: .milliseconds(240))
                         action()
                         var t = Transaction()
                         t.disablesAnimations = true
@@ -48,7 +87,8 @@ struct EdgeSwipeBack: ViewModifier {
                         leaving = false
                     }
                 } else {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { progress = 0 }
+                    // يرجع بنطّة خفيفة
+                    withAnimation(.spring(response: 0.36, dampingFraction: 0.74)) { progress = 0 }
                 }
             }
     }
@@ -59,8 +99,27 @@ struct EdgeSwipeBack: ViewModifier {
     }
 }
 
+/// صورة للنافذة مثل ما هي على الشاشة الحين (للصفحة اللي تبان تحت وانت تسحب للرجوع)
+enum WindowSnapshot {
+    @MainActor
+    static func capture() -> UIImage? {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) else { return nil }
+        let bounds = window.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = window.screen.scale
+        format.opaque = true
+        return UIGraphicsImageRenderer(bounds: bounds, format: format).image { _ in
+            window.drawHierarchy(in: bounds, afterScreenUpdates: false)
+        }
+    }
+}
+
 extension View {
-    func edgeSwipeBack(enabled: Bool, action: @escaping () -> Void) -> some View {
-        modifier(EdgeSwipeBack(enabled: enabled, action: action))
+    func edgeSwipeBack(enabled: Bool, backdrop: UIImage? = nil, action: @escaping () -> Void) -> some View {
+        modifier(EdgeSwipeBack(enabled: enabled, backdrop: backdrop, action: action))
     }
 }

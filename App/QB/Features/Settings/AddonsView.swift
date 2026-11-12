@@ -85,6 +85,8 @@ struct AddonsView: View {
         .qbScreenBackground()
         .scrollContentBackground(.hidden)
         .navigationTitle(L("الإضافات"))
+        // عنوان صغير بالنص فوق، والمحتوى يبدأ على طول تحته (بدون مساحة العنوان الكبير الفاضية)
+        .navigationBarTitleDisplayMode(.inline)
             .qbNavBar()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

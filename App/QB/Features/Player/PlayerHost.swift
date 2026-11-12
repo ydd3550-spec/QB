@@ -5,6 +5,7 @@ import QBCore
 /// المشغّل بملء الشاشة: الفيديو، الترجمة، الإيماءات، وأدوات التحكم الزجاجية
 struct PlayerHost: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
     private var player: PlayerModel { app.player }
 
     @State private var controlsVisible = true
@@ -12,6 +13,9 @@ struct PlayerHost: View {
     @State private var dragOffset: CGFloat = 0
     /// السحب لتحت خلص وقاعد نطلع: نوقف أي إيماءة ثانية لين تختفي الشاشة
     @State private var leaving = false
+    /// البطاقة تختفي وهي نازلة (قبل لفّة الشاشة للطول)
+    @State private var dismissFade = false
+    private static let stage = "playerStage"
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
@@ -49,13 +53,16 @@ struct PlayerHost: View {
     var body: some View {
         GeometryReader { geo in
             let screen = fullScreenSize(geo)
+            let dismiss = DismissCard(offset: dragOffset, screen: screen)
             ZStack {
                 Color.black.ignoresSafeArea()
 
+                let pinchScale = PlayerLogic.pinchPreviewScale(pinchMagnification)
                 EngineSurface(surface: player.surface)
-                    // معاينة خفيفة وقت القرص، وترجع لمكانها أول ما تشيل أصابعك
-                    .scaleEffect(PlayerLogic.pinchPreviewScale(pinchMagnification))
                     .ignoresSafeArea()
+                    // معاينة خفيفة وقت القرص، وترجع لمكانها أول ما تشيل أصابعك.
+                    // تكبير رسم بس: مقاس الفيديو نفسه ما يتغيّر أبدًا، فـ VLC ما يعيد بناء الصورة
+                    .visualEffect { content, _ in content.scaleEffect(pinchScale) }
                     .opacity(player.surface == nil ? 0 : 1)
 
                 HiddenVolumeView(levels: levels)
@@ -107,17 +114,34 @@ struct PlayerHost: View {
 
                 if controlsVisible {
                     controls
+                        // الأزرار تختفي بنعومة مع السحب لتحت بدل ما تبقى فوق الصورة
+                        .opacity(dismiss.controlsOpacity)
                         .transition(.opacity)
                 }
 
                 nextUpCard
+                    .opacity(dismiss.controlsOpacity)
             }
-            .offset(y: dragOffset)
-            .scaleEffect(1 - min(dragOffset / 1600, 0.12))
+            // السحب لتحت مثل بطاقات iOS: الزوايا تتدوّر لين توصل لزوايا الجهاز، والبطاقة تصغر شوي وتلحق الإصبع.
+            // كله تحويل رسم بس (بدون تغيير مقاس أو مكان أي view)، فالفيديو يكمّل بنفس مقاسه وما ينعاد بناؤه
+            .mask {
+                RoundedRectangle(cornerRadius: dismiss.cornerRadius, style: .continuous)
+                    .ignoresSafeArea()
+            }
+            .visualEffect { content, _ in
+                content
+                    .scaleEffect(dismiss.scale, anchor: .center)
+                    .offset(y: dismiss.offset)
+            }
+            .opacity(leaving && dismissFade ? 0 : 1)
             .allowsHitTesting(!leaving)
             .onAppear { player.setZoomViewport(screen) }
             .onChange(of: screen) { _, size in player.setZoomViewport(size) }
+            .onChange(of: dragOffset) { _, d in player.dismissProgress = DismissCard(offset: d, screen: screen).progress }
         }
+        // مرجع ثابت للإيماءات: ما يتحرّك مع البطاقة. قبل كانت الإيماءة تقيس على البطاقة اللي هي نفسها تحرّكها،
+        // فالإزاحة تتأرجح كل إطار بين مكان إصبعك والصفر، وتطلع صورتين فوق بعض وكل شي يتشوّه
+        .coordinateSpace(.named(Self.stage))
         // خلفية الشاشة شفافة: لما تسحب لتحت تشوف الصفحة اللي تحت مثل ما هي، وما تنعاد ولا تنبني من جديد
         .presentationBackground(.clear)
         .statusBarHidden(!controlsVisible)
@@ -126,6 +150,25 @@ struct PlayerHost: View {
         .onAppear {
             scheduleHide()
             player.coverAppeared()
+            let model = player
+            levels.onSoftwareVolume = { [weak model] v in model?.setSoftwareVolume(v) }
+            levels.startObserving()
+        }
+        .onDisappear {
+            levels.playerClosed()
+            player.dismissProgress = 0
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                levels.reapplyBrightness()
+                levels.startObserving()
+            case .background:
+                levels.restoreBrightness()
+                levels.stopObserving()
+            default:
+                break
+            }
         }
         .onChange(of: pinching) { _, active in
             if active {
@@ -144,7 +187,7 @@ struct PlayerHost: View {
                 if !pinching { dragVoided = false }
                 if seekPreview != nil { seekPreview = nil }
                 if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-                if dragOffset > 0, !leaving { withAnimation(Motion.snappy) { dragOffset = 0 } }
+                if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0 } }
                 dragAxis = nil
             }
         }
@@ -187,7 +230,7 @@ struct PlayerHost: View {
                 if controlsVisible { hideControls() } else { showControls(autoHide: true) }
             }
             .gesture(
-                DragGesture(minimumDistance: 14)
+                DragGesture(minimumDistance: 14, coordinateSpace: .named(Self.stage))
                     .updating($dragging) { _, state, _ in state = true }
                     .onChanged { v in
                         // إصبعين يقرصون: هذا تكبير مو سحب
@@ -237,16 +280,23 @@ struct PlayerHost: View {
                         }
                         if dragAxis == .vertical {
                             if PlayerLogic.swipeDismisses(translation: v.translation.height, predicted: v.predictedEndTranslation.height) {
-                                // نكمّل الحركة لتحت لين تطلع من الشاشة، وبعدين نشيلها بدون حركة ثانية.
-                                // قبل كانت ترجع لفوق وتنزل مرة ثانية مع حركة الإغلاق، فيبان كل شي يتكرر.
+                                // نكمّل الحركة لتحت بنفس سرعة إصبعك لين تطلع من الشاشة، وبعدين نشيلها بدون حركة ثانية
                                 leaving = true
-                                withAnimation(.easeOut(duration: 0.22)) { dragOffset = size.height + 120 }
+                                let remaining = max(1, DismissCard.offscreen(size) - dragOffset)
+                                let velocity = max(0, (v.predictedEndTranslation.height - v.translation.height) * 4)
+                                let spring = Animation.interpolatingSpring(mass: 1, stiffness: 260, damping: 32,
+                                                                           initialVelocity: Double(velocity / remaining))
+                                // بالعرض الشاشة لازم تلف للطول قبل ما تنقفل: نخفي البطاقة كلها أول عشان اللفّة ما تبان عليها
+                                let landscape = size.width > size.height
+                                withAnimation(spring) { dragOffset = DismissCard.offscreen(size) }
+                                withAnimation(.easeIn(duration: landscape ? 0.2 : 0.28)) { dismissFade = true }
                                 Task {
-                                    try? await Task.sleep(for: .milliseconds(240))
+                                    try? await Task.sleep(for: .milliseconds(landscape ? 220 : 300))
                                     player.minimize(animated: false)
                                 }
                             } else {
-                                withAnimation(Motion.snappy) { dragOffset = 0 }
+                                // يرجع بنطّة خفيفة، ولو لمستها وهي راجعة تمسكها من مكانها
+                                withAnimation(DismissCard.springBack) { dragOffset = 0 }
                             }
                         }
                     }
@@ -277,7 +327,7 @@ struct PlayerHost: View {
         dragVoided = true
         if seekPreview != nil { seekPreview = nil }
         if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-        if dragOffset > 0, !leaving { withAnimation(Motion.snappy) { dragOffset = 0 } }
+        if dragOffset > 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0 } }
         dragAxis = nil
     }
 
@@ -461,25 +511,65 @@ struct PlayerHost: View {
             } onScrubbing: { scrubbing in
                 if scrubbing { hideTask?.cancel() } else { scheduleHide() }
             }
-            HStack(spacing: 10) {
-                // Chips keep their full labels; when they don't fit the row scrolls instead of truncating
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        pill(L("الترجمة والصوت"), "captions.bubble.fill") { sheet = .tracks }
-                        pill(L("المصادر"), "rectangle.stack.fill") { sheet = .sources }
-                        pill(rateLabel, "gauge.with.dots.needle.67percent", reserve: [L("السرعة"), "1.75x", "0.25x"]) { sheet = .speed }
-                        // Always there; dimmed until similar titles arrive (nothing appears or shifts)
-                        pill(L("مشابه"), "square.grid.2x2.fill") { sheet = .similar }
-                            .disabled(player.similar.isEmpty)
-                            .opacity(player.similar.isEmpty ? 0.35 : 1)
+            // الأزرار تحت كلها تبان كاملة دايم: صف واحد عادي، ولو ما وسع صف أصغر شوي، ولو ما وسع صفّين.
+            // ما فيه تمرير ولا زر مقصوص على الطرف
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { chipSet(compact: false) }
+                HStack(spacing: 6) { chipSet(compact: true) }
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        tracksChip(compact: false)
+                        sourcesChip(compact: false)
+                        speedChip(compact: false)
                     }
-                    .padding(.vertical, 2)
+                    HStack(spacing: 8) {
+                        similarChip(compact: false)
+                        engineMenu(compact: false)
+                    }
                 }
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                engineMenu
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        tracksChip(compact: true)
+                        sourcesChip(compact: true)
+                        speedChip(compact: true)
+                    }
+                    HStack(spacing: 6) {
+                        similarChip(compact: true)
+                        engineMenu(compact: true)
+                    }
+                }
             }
+            .frame(maxWidth: .infinity)
         }
         .foregroundStyle(.white)
+    }
+
+    @ViewBuilder
+    private func chipSet(compact: Bool) -> some View {
+        tracksChip(compact: compact)
+        sourcesChip(compact: compact)
+        speedChip(compact: compact)
+        similarChip(compact: compact)
+        engineMenu(compact: compact)
+    }
+
+    private func tracksChip(compact: Bool) -> some View {
+        pill(L("الترجمة والصوت"), "captions.bubble.fill", compact: compact) { sheet = .tracks }
+    }
+
+    private func sourcesChip(compact: Bool) -> some View {
+        pill(L("المصادر"), "rectangle.stack.fill", compact: compact) { sheet = .sources }
+    }
+
+    private func speedChip(compact: Bool) -> some View {
+        pill(rateLabel, "gauge.with.dots.needle.67percent", reserve: [L("السرعة"), "1.75x", "0.25x"], compact: compact) { sheet = .speed }
+    }
+
+    /// دايم موجود؛ باهت لين توصل العناوين المشابهة (ما يطلع شي فجأة ولا يتحرك شي)
+    private func similarChip(compact: Bool) -> some View {
+        pill(L("مشابه"), "square.grid.2x2.fill", compact: compact) { sheet = .similar }
+            .disabled(player.similar.isEmpty)
+            .opacity(player.similar.isEmpty ? 0.35 : 1)
     }
 
     private var rateLabel: String {
@@ -488,7 +578,7 @@ struct PlayerHost: View {
 
     /// Engine picker (native / VLC): always in the same place with the same width; the name only changes
     /// once an engine actually plays, so it doesn't flicker while loading
-    private var engineMenu: some View {
+    private func engineMenu(compact: Bool) -> some View {
         let current = player.settledEngineName.isEmpty ? player.engineName : player.settledEngineName
         let isVLC = current == "VLC"
         return Menu {
@@ -503,18 +593,18 @@ struct PlayerHost: View {
                 Label("VLC", systemImage: isVLC ? "checkmark" : "play.rectangle")
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "cpu").font(.system(size: 13, weight: .semibold))
+            HStack(spacing: compact ? 4 : 6) {
+                Image(systemName: "cpu").font(.system(size: compact ? 11 : 13, weight: .semibold))
                 ZStack {
                     Text(L("الأصلي")).hidden()
                     Text(verbatim: "VLC").hidden()
                     Text(isVLC ? "VLC" : L("الأصلي"))
                 }
-                .font(Typo.caption).lineLimit(1).fixedSize()
+                .font(compact ? Typo.font(.medium, 11, .caption2) : Typo.caption).lineLimit(1).fixedSize()
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: 36)
+            .padding(.horizontal, compact ? 9 : 12)
+            .frame(height: compact ? 34 : 36)
             .glassEffect(Glass.player.interactive(), in: .capsule)
         }
         .simultaneousGesture(TapGesture().onEnded { hideTask?.cancel() })
@@ -522,21 +612,21 @@ struct PlayerHost: View {
     }
 
     /// reserve: the label's width is the widest of these, so changing it (speed) never moves the chips after it
-    private func pill(_ title: String, _ icon: String, reserve: [String] = [], action: @escaping () -> Void) -> some View {
+    private func pill(_ title: String, _ icon: String, reserve: [String] = [], compact: Bool = false, action: @escaping () -> Void) -> some View {
         Button {
             hideTask?.cancel()
             action()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 13, weight: .semibold))
+            HStack(spacing: compact ? 4 : 6) {
+                Image(systemName: icon).font(.system(size: compact ? 11 : 13, weight: .semibold))
                 ZStack {
                     ForEach(reserve, id: \.self) { Text(verbatim: $0).hidden() }
                     Text(title)
                 }
-                .font(Typo.caption).lineLimit(1).fixedSize()
+                .font(compact ? Typo.font(.medium, 11, .caption2) : Typo.caption).lineLimit(1).fixedSize()
             }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
+            .padding(.horizontal, compact ? 9 : 12)
+            .frame(height: compact ? 34 : 36)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -868,4 +958,45 @@ struct AirPlayButton: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+
+/// شكل بطاقة المشغّل وقت السحب لتحت (مثل تطبيق Apple TV والصور):
+/// تلحق الإصبع 1:1، تصغر شوي، وزواياها تتدوّر لين توصل لزوايا الشاشة
+struct DismissCard {
+    let offset: CGFloat
+    let screen: CGSize
+
+    /// 0 مكانها، 1 طلعت من الشاشة تقريبًا
+    var progress: Double {
+        guard screen.height > 0 else { return 0 }
+        return Double(min(max(offset / (screen.height * 0.75), 0), 1))
+    }
+
+    var scale: CGFloat { 1 - 0.1 * CGFloat(progress) }
+
+    /// الزوايا توصل لزوايا الجهاز خلال أول 90 نقطة سحب
+    var cornerRadius: CGFloat {
+        guard offset > 0 else { return 0 }
+        return Self.deviceCornerRadius * min(offset / 90, 1)
+    }
+
+    /// الأزرار تختفي خلال أول 70 نقطة
+    var controlsOpacity: Double { Double(1 - min(max(offset, 0) / 70, 1)) }
+
+    /// مسافة كافية تطلّع البطاقة من الشاشة حتى لو لفّت الشاشة بعدها
+    static func offscreen(_ size: CGSize) -> CGFloat { max(size.width, size.height) + 160 }
+
+    /// رجوع بنطّة خفيفة (نفس إحساس الأزرار في التطبيق)
+    static let springBack = Animation.spring(response: 0.36, dampingFraction: 0.74)
+
+    /// نصف قطر زوايا شاشة الجهاز (ولو ما انعرف: قيمة قريبة من أجهزة آيفون الحديثة)
+    static let deviceCornerRadius: CGFloat = {
+        let key = ["Radius", "Corner", "display", "_"].reversed().joined()
+        let screen = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
+        if let screen, screen.responds(to: NSSelectorFromString(key)),
+           let r = screen.value(forKey: key) as? CGFloat, r > 0 {
+            return r
+        }
+        return 50
+    }()
 }

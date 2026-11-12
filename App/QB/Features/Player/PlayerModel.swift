@@ -32,6 +32,9 @@ final class PlayerModel {
     weak var app: AppModel?
 
     // العرض
+    /// كم انسحبت شاشة المشغّل لتحت (0…1): الصفحة اللي وراها تكبر وتفتح معها
+    var dismissProgress: Double = 0
+
     var isPresented = false {
         didSet {
             if isPresented, !oldValue {
@@ -232,6 +235,7 @@ final class PlayerModel {
             state = .loading
             isBuffering = true
             engine.setRate(rate)
+            if softwareVolume < 1 { engine.setVolume(softwareVolume) }
             startTicking()
             closeRemux()
             if tryRemux {
@@ -648,6 +652,14 @@ final class PlayerModel {
 
     func skip(_ delta: Double) {
         seek(to: elapsed + delta)
+    }
+
+    /// صوت المشغّل نفسه (احتياط لو صوت الجهاز ما تغيّر). ينطبق على أي مشغّل يبدأ بعده
+    private(set) var softwareVolume: Float = 1
+
+    func setSoftwareVolume(_ v: Float) {
+        softwareVolume = v
+        engine?.setVolume(v)
     }
 
     func setRate(_ r: Float) {

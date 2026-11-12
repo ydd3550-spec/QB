@@ -376,6 +376,10 @@ final class NativeEngine: NSObject, PlaybackEngine {
         if state == .ended, wantsPlay { player.playImmediately(atRate: rate) }
     }
 
+    func setVolume(_ volume: Float) {
+        player.volume = min(max(volume, 0), 1)
+    }
+
     func setRate(_ rate: Float) {
         self.rate = rate
         player.defaultRate = rate

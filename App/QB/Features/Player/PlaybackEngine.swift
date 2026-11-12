@@ -58,6 +58,8 @@ protocol PlaybackEngine: AnyObject {
     func pause()
     func seek(to seconds: Double)
     func setRate(_ rate: Float)
+    /// صوت المشغّل نفسه (0…1). احتياط لو ما قدرنا نغيّر صوت الجهاز
+    func setVolume(_ volume: Float)
     /// يوقف ويفك الموارد. آمن لو اننادى أكثر من مرة
     func shutdown()
 
