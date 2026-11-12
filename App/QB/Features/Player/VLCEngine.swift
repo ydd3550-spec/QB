@@ -121,6 +121,9 @@ final class VLCEngine: PlaybackEngine {
     let kindName = "VLC"
     private let view = VLCSurfaceView()
     var surface: UIView { view }
+    /// position of the audio / subtitle track to start with, among the file's tracks of that kind
+    var startAudioTrack: Int?
+    var startSubtitleTrack: Int?
 
     private let player = VLCMediaPlayer()
     private let commands = DispatchQueue(label: "qb.vlc.commands", qos: .userInitiated)
@@ -226,6 +229,9 @@ final class VLCEngine: PlaybackEngine {
         media.addOption(":no-video-title-show")
         // عدّاد الصور المعروضة والصوت المشغّل (للمراقب)
         media.addOption(":stats")
+        // المسار اللي اختاره المستخدم من قائمة المشغّل الأصلي (DTS، TrueHD، VobSub ...): VLC يبدأ فيه
+        if let audio = startAudioTrack { media.addOption(":audio-track=\(audio)") }
+        if let sub = startSubtitleTrack { media.addOption(":sub-track=\(sub)") }
         return media
     }
 

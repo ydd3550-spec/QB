@@ -143,6 +143,7 @@ final class PlayerModel {
         if changedTitle {
             videoFill = false
             externalSubtitles = []
+            subtitleChosenByUser = false
             selectedExternal = nil
             cues = []
             cueText = nil
@@ -212,7 +213,18 @@ final class PlayerModel {
             // also when the user picked the native player for a source that needs VLC as-is
             let needsContainerHelp = useVLC ? manualNative == nil : (source.engine == .vlc || nativeFailedThisTitle)
             let tryRemux = !forceVLC && needsContainerHelp && remuxable(url: url, source: source)
-            let engine: any PlaybackEngine = (useVLC && !tryRemux) ? VLCEngine() : makeNative()
+            let engine: any PlaybackEngine
+            if useVLC && !tryRemux {
+                let vlc = VLCEngine()
+                // a track picked in the native player's menu that only VLC plays (DTS, TrueHD, VobSub ...)
+                vlc.startAudioTrack = pendingVLCAudio
+                vlc.startSubtitleTrack = pendingVLCSubtitle
+                engine = vlc
+            } else {
+                engine = makeNative()
+            }
+            pendingVLCAudio = nil
+            pendingVLCSubtitle = nil
             wire(engine)
             self.engine = engine
             engineName = engine.kindName
@@ -240,6 +252,7 @@ final class PlayerModel {
                     }
                     if let opened, let local = URL(string: opened.playlistUrl) {
                         self.remuxURL = opened.playlistUrl
+                        self.remuxInfo = opened
                         self.remuxedSourceId = source.id
                         engine.load(url: local, headers: [:], startAt: startAt)
                     } else {
@@ -266,7 +279,18 @@ final class PlayerModel {
     // MARK: - remux (MKV -> HLS for the native player)
 
     private var remuxURL: String?
+    /// what the remuxer found in the file: PGS tracks drawn by the app, tracks only VLC plays
+    private var remuxInfo: RemuxedStream?
     private var remuxedSourceId: String?
+    /// VLC starts on these tracks (picked in the native player's menu, playable by VLC only)
+    private var pendingVLCAudio: Int?
+    private var pendingVLCSubtitle: Int?
+    /// PGS track drawn over the native player (index into remuxInfo.pgs), and what's on screen
+    private var selectedPGS: Int?
+    private var pgsShownId: Int64 = -1
+    private var pgsBusy = false
+    /// the user turned subtitles off or picked one: no automatic PGS after that
+    private var subtitleChosenByUser = false
     private var remuxToken: UUID?
     /// sources that turned out not remuxable (don't try again this session)
     private var remuxFailed: Set<String> = []
@@ -280,11 +304,10 @@ final class PlayerModel {
         let other = [".avi", ".ts", ".flv", ".wmv", ".m2ts", ".mpg", ".mpeg", ".ogv", ".rmvb", ".3gp", ".webm"]
         if other.contains(where: { path.hasSuffix($0) }) { return false }
         // codecs the native player can't decode: skip the attempt (the remuxer would refuse them anyway)
-        let noNative = ["truehd", "vp9", "av1", "xvid", "divx"]
+        // (DTS / TrueHD audio is fine: the remuxer plays a compatible track of the same language natively,
+        // or says no and VLC takes over at the same second)
+        let noNative = ["vp9", "av1", "xvid", "divx"]
         if noNative.contains(where: { name.contains($0) }) { return false }
-        if name.contains("dts") && !(name.contains("aac") || name.contains("ddp") || name.contains("dd+") || name.contains("ac3")) {
-            return false
-        }
         return true
     }
 
@@ -292,7 +315,85 @@ final class PlayerModel {
         remuxToken = nil
         if let remuxURL { remuxClose(playlistUrl: remuxURL) }
         remuxURL = nil
+        remuxInfo = nil
         remuxedSourceId = nil
+        selectedPGS = nil
+        pgsShownId = -1
+        (engine as? NativeEngine)?.setImageSubtitle(nil, canvas: .zero, rect: .zero)
+    }
+
+    // MARK: - PGS (image subtitles) over the native player
+
+    private func selectPGS(_ index: Int?) {
+        guard let remuxURL else { return }
+        selectedPGS = index
+        pgsShownId = -1
+        (engine as? NativeEngine)?.setImageSubtitle(nil, canvas: .zero, rect: .zero)
+        remuxPgsSelect(playlistUrl: remuxURL, index: index.map { UInt32($0) })
+        if index != nil { updatePGS() }
+    }
+
+    /// what's on screen now (called with the subtitle tick); the bitmap is built off the main thread
+    private func updatePGS() {
+        guard let remuxURL, selectedPGS != nil, !pgsBusy, let native = engine as? NativeEngine else { return }
+        let now = native.liveTime
+        guard now.isFinite else { return }
+        pgsBusy = true
+        let known = pgsShownId
+        let ms = Int64((now * 1000).rounded())
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let frame = remuxPgsAt(playlistUrl: remuxURL, timeMs: ms, knownId: known)
+            let image = frame.flatMap { $0.rgba.isEmpty ? nil : PlayerModel.makeImage($0) }
+            await MainActor.run {
+                guard let self else { return }
+                self.pgsBusy = false
+                guard self.remuxURL == remuxURL, self.selectedPGS != nil, let native = self.engine as? NativeEngine else { return }
+                guard let frame else {
+                    if self.pgsShownId != -1 {
+                        self.pgsShownId = -1
+                        native.setImageSubtitle(nil, canvas: .zero, rect: .zero)
+                    }
+                    return
+                }
+                guard frame.id != self.pgsShownId, let image else { return }
+                self.pgsShownId = frame.id
+                native.setImageSubtitle(image,
+                                        canvas: CGSize(width: Int(frame.canvasW), height: Int(frame.canvasH)),
+                                        rect: CGRect(x: Int(frame.x), y: Int(frame.y), width: Int(frame.w), height: Int(frame.h)))
+            }
+        }
+    }
+
+    nonisolated private static func makeImage(_ f: RemuxPgsFrame) -> CGImage? {
+        let w = Int(f.w), h = Int(f.h)
+        guard w > 0, h > 0, f.rgba.count >= w * h * 4 else { return nil }
+        // straight alpha -> premultiplied (what Core Animation draws)
+        var px = [UInt8](f.rgba.prefix(w * h * 4))
+        var i = 0
+        while i < px.count {
+            let a = UInt16(px[i + 3])
+            if a < 255 {
+                px[i] = UInt8((UInt16(px[i]) * a + 127) / 255)
+                px[i + 1] = UInt8((UInt16(px[i + 1]) * a + 127) / 255)
+                px[i + 2] = UInt8((UInt16(px[i + 2]) * a + 127) / 255)
+            }
+            i += 4
+        }
+        guard let provider = CGDataProvider(data: Data(px) as CFData) else { return nil }
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                       space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+    }
+
+    /// switches to VLC at the same second, starting on a track only VLC plays
+    private func reopenInVLC(audio: Int?, subtitle: Int?) {
+        guard let source else { return }
+        pendingVLCAudio = audio
+        pendingVLCSubtitle = subtitle
+        manualNative = nil
+        triedSources.remove(source.id)
+        start(source, startAt: elapsed, forceVLC: true)
     }
 
     private func makeNative() -> NativeEngine {
@@ -738,7 +839,7 @@ final class PlayerModel {
             var beat = 0
             while !Task.isCancelled {
                 // Subtitles every 100 ms from the live clock; the rest of the state every 200 ms
-                if beat % 2 == 0 { self?.sync() } else { self?.updateCue() }
+                if beat % 2 == 0 { self?.sync() } else { self?.updateCue(); self?.updatePGS() }
                 beat &+= 1
                 try? await Task.sleep(for: .milliseconds(100))
             }
@@ -931,28 +1032,95 @@ final class PlayerModel {
 
     private func readTracks() {
         guard let engine else { return }
-        audioTracks = engine.audioTracks
+        var audio = engine.audioTracks
+        var subs = engine.embeddedSubtitles
+        var embedded = engine.selectedEmbeddedSubtitle
+        if let info = remuxInfo, engine is NativeEngine {
+            // the remuxed file's other tracks: PGS drawn here, the rest a tap away in VLC (same second)
+            let locale = L10n.language.locale
+            func label(_ name: String, _ lang: String, _ n: Int) -> String {
+                let trimmed = name.trimmingCharacters(in: .whitespaces)
+                let language = lang.isEmpty || lang == "und" ? "" : LanguageNames.displayName(lang, locale: locale)
+                if !trimmed.isEmpty, !language.isEmpty, !trimmed.localizedCaseInsensitiveContains(language) { return "\(language) · \(trimmed)" }
+                if !trimmed.isEmpty { return trimmed }
+                return language.isEmpty ? L("مسار") + " \(n + 1)" : language
+            }
+            for t in info.pgs {
+                let forced = t.forced ? " · " + L("إجبارية") : ""
+                subs.append(TrackOption(id: "pgs:\(t.index)", name: label(t.name, t.language, Int(t.ordinal)) + forced,
+                                        language: t.language, detail: L("داخل الملف") + " · PGS"))
+            }
+            if let selectedPGS { embedded = "pgs:\(selectedPGS)" }
+            for t in info.vlcOnly {
+                let option = TrackOption(id: "vlc-\(t.kind):\(t.ordinal)", name: label(t.name, t.language, Int(t.ordinal)),
+                                         language: t.language, detail: t.codec + " · " + L("يشتغل بـ VLC"))
+                if t.kind == "audio" { audio.append(option) } else { subs.append(option) }
+            }
+        }
+        audioTracks = audio
         selectedAudio = engine.selectedAudio
-        embeddedSubtitles = engine.embeddedSubtitles
-        selectedEmbedded = engine.selectedEmbeddedSubtitle
+        embeddedSubtitles = subs
+        selectedEmbedded = embedded
+        autoSelectPGS()
     }
 
     func selectAudio(_ id: String) {
+        if id.hasPrefix("vlc-audio:"), let n = Int(id.dropFirst("vlc-audio:".count)) {
+            reopenInVLC(audio: n, subtitle: nil)
+            return
+        }
         engine?.selectAudio(id)
         readTracks()
     }
 
     func selectEmbedded(_ id: String?) {
+        subtitleChosenByUser = true
+        if let id, id.hasPrefix("vlc-subtitle:"), let n = Int(id.dropFirst("vlc-subtitle:".count)) {
+            reopenInVLC(audio: nil, subtitle: n)
+            return
+        }
         if id != nil { clearExternal() }
+        if let id, id.hasPrefix("pgs:"), let n = Int(id.dropFirst("pgs:".count)) {
+            (engine as? NativeEngine)?.deselectLegible()
+            selectPGS(n)
+            readTracks()
+            return
+        }
+        if selectedPGS != nil { selectPGS(nil) }
         engine?.selectEmbeddedSubtitle(id)
         readTracks()
     }
 
     /// يطفي كل الترجمات
     func subtitlesOff() {
+        subtitleChosenByUser = true
         clearExternal()
+        if selectedPGS != nil { selectPGS(nil) }
         engine?.selectEmbeddedSubtitle(nil)
         readTracks()
+    }
+
+    /// PGS in the file and nothing else showing: the forced track (foreign dialogue) always, or the
+    /// track in the user's subtitle language when no other subtitle in that language exists
+    private func autoSelectPGS() {
+        guard let info = remuxInfo, !info.pgs.isEmpty, selectedPGS == nil, !subtitleChosenByUser,
+              selectedExternal == nil, selectedEmbedded == nil, engine is NativeEngine else { return }
+        let lang = app?.subtitleLang ?? "off"
+        var pick: RemuxPgsTrack?
+        if lang != "off" {
+            let hasText = externalSubtitles.contains { LanguageNames.matches($0.lang, lang) }
+                || embeddedSubtitles.contains { !$0.id.hasPrefix("pgs:") && !$0.id.hasPrefix("vlc-") && LanguageNames.matches($0.language ?? "", lang) }
+            if !hasText { pick = info.pgs.first { !$0.forced && LanguageNames.matches($0.language, lang) } }
+        }
+        if pick == nil {
+            let audioLang = audioTracks.first { $0.id == selectedAudio }?.language ?? ""
+            pick = info.pgs.first { $0.forced && (audioLang.isEmpty || LanguageNames.matches($0.language, audioLang)) }
+                ?? info.pgs.first { $0.forced && $0.isDefault }
+        }
+        guard let pick else { return }
+        (engine as? NativeEngine)?.deselectLegible()
+        selectPGS(Int(pick.index))
+        selectedEmbedded = "pgs:\(pick.index)"
     }
 
     private func clearExternal() {
@@ -1001,6 +1169,7 @@ final class PlayerModel {
 
     func selectExternal(_ track: SubtitleTrack) {
         guard let core else { return }
+        if selectedPGS != nil { selectPGS(nil) }
         engine?.selectEmbeddedSubtitle(nil)
         selectedExternal = track.id
         cues = []

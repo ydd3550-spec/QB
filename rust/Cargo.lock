@@ -1307,6 +1307,7 @@ dependencies = [
 name = "qb-remux"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "reqwest",
  "tokio",
  "tracing",

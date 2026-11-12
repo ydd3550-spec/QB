@@ -10,9 +10,10 @@ pub mod codec;
 pub mod ebml;
 pub mod mkv;
 pub mod mp4;
+pub mod pgs;
 pub mod vtt;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -144,27 +145,107 @@ pub struct Session {
     header: Header,
     video: Track,
     video_codec: VideoCodec,
-    audio: Option<(Track, AudioOut)>,
+    /// audio tracks AVPlayer can decode; [0] is the one that plays first. With one track it's muxed
+    /// with the video; with several each is its own HLS audio rendition (the player's audio menu).
+    audios: Vec<(Track, AudioOut)>,
     segments: Vec<Segment>,
+    /// init of index.m3u8 (video, plus the audio when muxed)
     init: Vec<u8>,
+    /// init of each audio rendition (only when demuxed)
+    audio_inits: Vec<Vec<u8>>,
     /// text subtitle tracks carried along as WebVTT renditions (the native player lists them)
     subs: Vec<Track>,
+    /// PGS image subtitle tracks, drawn by the app (see `pgs_at`)
+    pgs_tracks: Vec<Track>,
+    /// tracks only VLC can play (DTS / TrueHD audio, VobSub ...): the app lists them and switches
+    vlc_only: Vec<VlcTrack>,
     cache: Mutex<HashMap<usize, Arc<OnceCell<Arc<Built>>>>>,
+    pgs: Mutex<PgsStore>,
 }
 
-/// One segment: the fMP4 piece and the subtitle cues inside its window, per subtitle track
+/// One segment: the fMP4 piece(s), the subtitle cues and the PGS display sets inside its window
 struct Built {
     media: Arc<Vec<u8>>,
+    /// per audio rendition (demuxed only)
+    audio: Vec<Arc<Vec<u8>>>,
     subs: Vec<Vec<vtt::Cue>>,
+    /// per PGS track: (time ms, display set)
+    pgs: Vec<Vec<(i64, Vec<u8>)>>,
+}
+
+/// A track of the file the native player can't carry
+#[derive(Debug, Clone, PartialEq)]
+pub struct VlcTrack {
+    /// "audio" or "subtitle"
+    pub kind: String,
+    /// position among the file's tracks of that kind (VLC lists them in file order)
+    pub ordinal: usize,
+    pub name: String,
+    pub language: String,
+    pub codec: String,
+}
+
+/// A PGS track drawn by the app over the native player
+#[derive(Debug, Clone, PartialEq)]
+pub struct PgsTrack {
+    /// index to pass to `pgs_select`
+    pub index: usize,
+    /// position among the file's subtitle tracks
+    pub ordinal: usize,
+    pub name: String,
+    pub language: String,
+    pub forced: bool,
+    pub default: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct Info {
     pub video_codec: String,
+    /// codec of the audio that plays first
     pub audio_codec: String,
     pub duration_s: f64,
     pub segments: usize,
     pub subtitles: usize,
+    pub audio_tracks: usize,
+    pub pgs: Vec<PgsTrack>,
+    pub vlc_only: Vec<VlcTrack>,
+}
+
+/// The selected PGS track's display sets seen so far (kept across the segment cache)
+#[derive(Default)]
+struct PgsStore {
+    track: Option<usize>,
+    events: BTreeMap<i64, Arc<Vec<u8>>>,
+    bytes: usize,
+    covered: HashSet<usize>,
+    fetching: HashSet<usize>,
+    last: Option<(i64, Option<Arc<pgs::Bitmap>>)>,
+}
+
+/// What `pgs_at` returns: the subtitle on screen. `rgba` is empty when it's the one `known_id` names.
+#[derive(Debug, Clone)]
+pub struct PgsFrame {
+    pub id: i64,
+    pub canvas_w: u32,
+    pub canvas_h: u32,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub rgba: Vec<u8>,
+}
+
+fn audio_codec_string(o: &AudioOut) -> &'static str {
+    match o.codec {
+        codec::AudioCodec::Aac(_) => "mp4a.40.2",
+        codec::AudioCodec::Ac3(_) => "ac-3",
+        codec::AudioCodec::Eac3(_) => "ec-3",
+        codec::AudioCodec::Mp3 => "mp4a.40.34",
+    }
+}
+
+fn kind_name(t: &Track) -> String {
+    t.codec_id.trim_start_matches("A_").trim_start_matches("S_").to_string()
 }
 
 fn to_ticks(ts: i64, timescale: u64, rate: u64) -> i64 {
@@ -203,18 +284,23 @@ impl Session {
             return Err(e("compressed video track"));
         }
         let video_codec = VideoCodec::from_track(&video).map_err(e)?;
-        let audio_track = header
-            .tracks
-            .iter()
-            .find(|t| t.kind == 2 && t.enabled && t.default)
-            .or_else(|| header.tracks.iter().find(|t| t.kind == 2))
-            .cloned();
-        if let Some(a) = &audio_track {
-            codec::audio_supported(a).map_err(e)?;
-            if a.encoded {
-                return Err(e("compressed audio track"));
-            }
-        }
+        // audio: the default track must be playable natively (or another track in its language,
+        // e.g. the AC-3 next to a DTS default). Other playable tracks become alternates; the rest
+        // are listed for VLC.
+        let all_audio: Vec<Track> = header.tracks.iter().filter(|t| t.kind == 2).cloned().collect();
+        let playable = |t: &Track| !t.encoded && codec::audio_supported(t).is_ok();
+        let default_audio = all_audio.iter().find(|t| t.enabled && t.default).or_else(|| all_audio.first()).cloned();
+        let primary = match &default_audio {
+            None => None,
+            Some(d) if playable(d) => Some(d.clone()),
+            Some(d) => match all_audio.iter().find(|t| playable(t) && t.language == d.language) {
+                Some(t) => Some(t.clone()),
+                None => {
+                    codec::audio_supported(d).map_err(e)?;
+                    return Err(e("compressed audio track"));
+                }
+            },
+        };
 
         // Cues: keyframe index of the video track
         let cues_pos = header.seek_abs(mkv::CUES).ok_or_else(|| e("no seek index (Cues)"))?;
@@ -240,34 +326,74 @@ impl Session {
         }
 
         let subs: Vec<Track> = header.tracks.iter().filter(|t| vtt::supported(t) && !t.encoded).cloned().collect();
+        let pgs_tracks: Vec<Track> =
+            header.tracks.iter().filter(|t| t.kind == 0x11 && t.codec_id == "S_HDMV/PGS" && !t.encoded).cloned().collect();
+        // subtitle tracks neither WebVTT nor PGS can carry (VobSub, DVB ...): VLC
+        let mut vlc_only: Vec<VlcTrack> = header
+            .tracks
+            .iter()
+            .filter(|t| t.kind == 0x11)
+            .enumerate()
+            .filter(|(_, t)| !subs.iter().any(|x| x.number == t.number) && !pgs_tracks.iter().any(|x| x.number == t.number))
+            .map(|(i, t)| VlcTrack { kind: "subtitle".into(), ordinal: i, name: t.name.clone(), language: t.language.clone(), codec: kind_name(t) })
+            .collect();
         let mut s = Session {
             source,
             header,
             video,
             video_codec,
-            audio: None,
+            audios: vec![],
             segments,
             init: vec![],
+            audio_inits: vec![],
             subs,
+            pgs_tracks,
+            vlc_only: vec![],
             cache: Mutex::new(HashMap::new()),
+            pgs: Mutex::new(PgsStore::default()),
         };
 
         // Audio config (AC-3 / E-AC-3 / MP3 need a real frame) from the first segment
         let first = s.read_frames(0).await?;
-        if let Some(at) = audio_track {
+        if let Some(at) = primary {
             let frame = first.iter().find(|f| f.track == at.number).ok_or_else(|| e("no audio in first segment"))?;
             let out = codec::audio_out(&at, &frame.data).map_err(e)?;
-            s.audio = Some((at, out));
+            s.audios.push((at, out));
         }
+        let mut audio_vlc = vec![];
+        for (i, t) in all_audio.iter().enumerate() {
+            if s.audios.iter().any(|(a, _)| a.number == t.number) {
+                continue;
+            }
+            let out = if playable(t) {
+                first.iter().find(|f| f.track == t.number).and_then(|f| codec::audio_out(t, &f.data).ok())
+            } else {
+                None
+            };
+            match out {
+                Some(o) => s.audios.push((t.clone(), o)),
+                None => audio_vlc.push(VlcTrack {
+                    kind: "audio".into(),
+                    ordinal: i,
+                    name: t.name.clone(),
+                    language: t.language.clone(),
+                    codec: kind_name(t),
+                }),
+            }
+        }
+        audio_vlc.append(&mut vlc_only);
+        s.vlc_only = audio_vlc;
         if !first.iter().any(|f| f.track == s.video.number && f.key) {
             return Err(e("no keyframe in first segment"));
         }
-        let lang = s.audio.as_ref().map(|(t, _)| t.language.clone()).unwrap_or_else(|| "und".into());
-        s.init = mp4::init(
-            &mp4::VideoInit { codec: s.video_codec, config: &s.video.private, width: s.video.width, height: s.video.height },
-            s.audio.as_ref().map(|(_, o)| o),
-            &lang,
-        );
+        let vinit = mp4::VideoInit { codec: s.video_codec, config: &s.video.private, width: s.video.width, height: s.video.height };
+        if s.audios.len() > 1 {
+            s.init = mp4::init(Some(&vinit), None, "und");
+            s.audio_inits = s.audios.iter().map(|(t, o)| mp4::init(None, Some(o), &t.language)).collect();
+        } else {
+            let lang = s.audios.first().map(|(t, _)| t.language.clone()).unwrap_or_else(|| "und".into());
+            s.init = mp4::init(Some(&vinit), s.audios.first().map(|(_, o)| o), &lang);
+        }
         // first segment is ready already
         let built = Arc::new(s.build(0, first)?);
         let cell = Arc::new(OnceCell::new());
@@ -279,11 +405,30 @@ impl Session {
     pub fn info(&self) -> Info {
         Info {
             video_codec: self.video_codec.name().into(),
-            audio_codec: self.audio.as_ref().map(|(_, o)| o.name().to_string()).unwrap_or_default(),
+            audio_codec: self.audios.first().map(|(_, o)| o.name().to_string()).unwrap_or_default(),
             duration_s: self.header.duration_ns / 1e9,
             segments: self.segments.len(),
             subtitles: self.subs.len(),
+            audio_tracks: self.audios.len(),
+            pgs: self
+                .pgs_tracks
+                .iter()
+                .enumerate()
+                .map(|(i, t)| PgsTrack {
+                    index: i,
+                    ordinal: self.header.tracks.iter().filter(|x| x.kind == 0x11).position(|x| x.number == t.number).unwrap_or(0),
+                    name: t.name.clone(),
+                    language: t.language.clone(),
+                    forced: t.forced,
+                    default: t.default && t.enabled,
+                })
+                .collect(),
+            vlc_only: self.vlc_only.clone(),
         }
+    }
+
+    fn demuxed(&self) -> bool {
+        self.audios.len() > 1
     }
 
     fn secs(&self, ts: u64) -> f64 {
@@ -305,22 +450,75 @@ impl Session {
                 i
             ));
         }
-        let codecs = (codec::video_codec_string(self.video_codec, &self.video.private), self.audio.as_ref().map(|(_, o)| &o.codec));
-        let audio = match codecs.1 {
-            Some(codec::AudioCodec::Aac(_)) => ",mp4a.40.2",
-            Some(codec::AudioCodec::Ac3(_)) => ",ac-3",
-            Some(codec::AudioCodec::Eac3(_)) => ",ec-3",
-            Some(codec::AudioCodec::Mp3) => ",mp4a.40.34",
-            None => "",
-        };
+        let mut audio_codecs: Vec<&str> = vec![];
+        for (_, o) in &self.audios {
+            let c = audio_codec_string(o);
+            if !audio_codecs.contains(&c) {
+                audio_codecs.push(c);
+            }
+        }
+        if self.demuxed() {
+            let mut names: Vec<String> = vec![];
+            for (i, (t, o)) in self.audios.iter().enumerate() {
+                let lang = vtt::lang2(&t.language);
+                let base = if !t.name.trim().is_empty() {
+                    t.name.replace('"', "'")
+                } else if lang == "und" {
+                    format!("Audio {}", i + 1)
+                } else {
+                    lang.to_uppercase()
+                };
+                let mut name = base.clone();
+                let mut k = 2;
+                while names.contains(&name) {
+                    name = format!("{base} {k}");
+                    k += 1;
+                }
+                names.push(name.clone());
+                out.push_str(&format!(
+                    "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"aud\",NAME=\"{}\",LANGUAGE=\"{}\",DEFAULT={},AUTOSELECT=YES,CHANNELS=\"{}\",URI=\"audio{}.m3u8\"\n",
+                    name,
+                    lang,
+                    if i == 0 { "YES" } else { "NO" },
+                    o.channels.max(1),
+                    i
+                ));
+            }
+        }
+        let mut codecs = codec::video_codec_string(self.video_codec, &self.video.private);
+        for c in &audio_codecs {
+            codecs.push(',');
+            codecs.push_str(c);
+        }
         let res = if self.video.width > 0 { format!(",RESOLUTION={}x{}", self.video.width, self.video.height) } else { String::new() };
         out.push_str(&format!(
-            "#EXT-X-STREAM-INF:BANDWIDTH=8000000,CODECS=\"{}{}\"{}{}\nindex.m3u8\n",
-            codecs.0,
-            audio,
+            "#EXT-X-STREAM-INF:BANDWIDTH=8000000,CODECS=\"{}\"{}{}{}\nindex.m3u8\n",
+            codecs,
             res,
+            if self.demuxed() { ",AUDIO=\"aud\"" } else { "" },
             if self.subs.is_empty() { "" } else { ",SUBTITLES=\"subs\"" }
         ));
+        out
+    }
+
+    /// media playlist of audio rendition `k` (demuxed only)
+    pub fn audio_playlist(&self, k: usize) -> Option<String> {
+        if !self.demuxed() || k >= self.audios.len() {
+            return None;
+        }
+        Some(self.media_playlist(&format!("ainit{k}.mp4"), &format!("a{k}_")))
+    }
+
+    fn media_playlist(&self, init: &str, prefix: &str) -> String {
+        let durations: Vec<f64> = self.segments.iter().map(|s| self.secs(s.end.saturating_sub(s.start))).collect();
+        let target = durations.iter().cloned().fold(1.0f64, f64::max).ceil() as u64;
+        let mut out = format!(
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"{init}\"\n"
+        );
+        for (i, d) in durations.iter().enumerate() {
+            out.push_str(&format!("#EXTINF:{:.3},\n{prefix}{i}.m4s\n", d.max(0.001)));
+        }
+        out.push_str("#EXT-X-ENDLIST\n");
         out
     }
 
@@ -339,16 +537,7 @@ impl Session {
     }
 
     pub fn playlist(&self) -> String {
-        let durations: Vec<f64> = self.segments.iter().map(|s| self.secs(s.end.saturating_sub(s.start))).collect();
-        let target = durations.iter().cloned().fold(1.0f64, f64::max).ceil() as u64;
-        let mut out = format!(
-            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{target}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"init.mp4\"\n"
-        );
-        for (i, d) in durations.iter().enumerate() {
-            out.push_str(&format!("#EXTINF:{:.3},\n{i}.m4s\n", d.max(0.001)));
-        }
-        out.push_str("#EXT-X-ENDLIST\n");
-        out
+        self.media_playlist("init.mp4", "")
     }
 
     async fn read_frames(&self, n: usize) -> Result<Vec<Frame>, RemuxError> {
@@ -356,16 +545,28 @@ impl Session {
         let buf = self.source.read(seg.from, seg.to).await?;
         let mut wanted = vec![self.video.number];
         wanted.extend(self.subs.iter().map(|t| t.number));
-        if let Some((a, _)) = &self.audio {
-            wanted.push(a.number);
-        } else if let Some(a) = self.header.tracks.iter().find(|t| t.kind == 2 && t.enabled && t.default).or_else(|| self.header.tracks.iter().find(|t| t.kind == 2)) {
-            wanted.push(a.number);
+        wanted.extend(self.pgs_tracks.iter().map(|t| t.number));
+        if self.audios.is_empty() {
+            // still opening: every audio track (their configs come from this first segment)
+            wanted.extend(self.header.tracks.iter().filter(|t| t.kind == 2).map(|t| t.number));
+        } else {
+            wanted.extend(self.audios.iter().map(|(t, _)| t.number));
         }
-        Ok(mkv::parse_clusters(&buf, &wanted))
+        let tracks: HashMap<u64, &Track> = self.header.tracks.iter().map(|t| (t.number, t)).collect();
+        Ok(mkv::parse_clusters(&buf, &wanted)
+            .into_iter()
+            .filter_map(|mut f| {
+                let t = tracks.get(&f.track)?;
+                if t.encoding != mkv::Encoding::None {
+                    f.data = t.decode_frame(std::mem::take(&mut f.data))?;
+                }
+                Some(f)
+            })
+            .collect())
     }
 
     fn build(&self, n: usize, frames: Vec<Frame>) -> Result<Built, RemuxError> {
-        let media = self.build_media(n, &frames)?;
+        let (media, audio) = self.build_media(n, &frames)?;
         let ts = self.header.timescale as i64;
         let to_ms = |t: i64| t * ts / 1_000_000;
         let subs = self
@@ -385,10 +586,18 @@ impl Session {
                     .collect()
             })
             .collect();
-        Ok(Built { media: Arc::new(media), subs })
+        let pgs = self
+            .pgs_tracks
+            .iter()
+            .map(|t| frames.iter().filter(|f| f.track == t.number).map(|f| (to_ms(f.pts), f.data.clone())).collect())
+            .collect();
+        let built = Built { media: Arc::new(media), audio: audio.into_iter().map(Arc::new).collect(), subs, pgs };
+        self.absorb_pgs(n, &built);
+        Ok(built)
     }
 
-    fn build_media(&self, n: usize, frames: &[Frame]) -> Result<Vec<u8>, RemuxError> {
+    /// the fMP4 piece of index.m3u8, and the audio rendition pieces when demuxed
+    fn build_media(&self, n: usize, frames: &[Frame]) -> Result<(Vec<u8>, Vec<Vec<u8>>), RemuxError> {
         let ts = self.header.timescale;
         // video: from the first keyframe, in storage (decode) order
         let vframes: Vec<&Frame> = frames
@@ -428,18 +637,172 @@ impl Session {
         }
         let mut runs = vec![mp4::TrackRun { id: mp4::VIDEO_ID, base_time: dts[0].max(0) as u64, samples: vsamples, video: true }];
 
-        if let Some((at, out)) = &self.audio {
+        let audio_run = |at: &Track, out: &AudioOut| -> Option<mp4::TrackRun<'_>> {
             let aframes: Vec<&Frame> = frames.iter().filter(|f| f.track == at.number).collect();
-            if let Some(first) = aframes.first() {
-                let base = to_ticks(first.pts, ts, out.rate as u64).max(0) as u64;
-                let samples = aframes
-                    .iter()
-                    .map(|f| mp4::Sample { data: &f.data, duration: codec::frame_samples(out, &f.data), cto: 0, key: true })
-                    .collect();
-                runs.push(mp4::TrackRun { id: mp4::AUDIO_ID, base_time: base, samples, video: false });
+            let first = aframes.first()?;
+            let base = to_ticks(first.pts, ts, out.rate as u64).max(0) as u64;
+            let samples = aframes
+                .iter()
+                .map(|f| mp4::Sample { data: &f.data, duration: codec::frame_samples(out, &f.data), cto: 0, key: true })
+                .collect();
+            Some(mp4::TrackRun { id: mp4::AUDIO_ID, base_time: base, samples, video: false })
+        };
+        if !self.demuxed() {
+            if let Some((at, out)) = self.audios.first() {
+                if let Some(r) = audio_run(at, out) {
+                    runs.push(r);
+                }
+            }
+            return Ok((mp4::fragment(n as u32 + 1, &runs), vec![]));
+        }
+        let audio = self
+            .audios
+            .iter()
+            .map(|(at, out)| {
+                let r = audio_run(at, out).unwrap_or_else(|| {
+                    // no audio in this window: an empty run keeps the rendition's timeline going
+                    let start = self.segments[n].start as i64;
+                    mp4::TrackRun { id: mp4::AUDIO_ID, base_time: to_ticks(start, ts, out.rate as u64).max(0) as u64, samples: vec![], video: false }
+                });
+                mp4::fragment(n as u32 + 1, &[r])
+            })
+            .collect();
+        Ok((mp4::fragment(n as u32 + 1, &runs), audio))
+    }
+
+    // MARK: PGS
+
+    /// keeps the selected PGS track's display sets of segment `n`
+    fn absorb_pgs(&self, n: usize, b: &Built) {
+        let mut st = self.pgs.lock().unwrap();
+        let Some(k) = st.track else { return };
+        st.fetching.remove(&n);
+        if !st.covered.insert(n) {
+            return;
+        }
+        for (t, d) in b.pgs.get(k).into_iter().flatten() {
+            if st.events.insert(*t, Arc::new(d.clone())).is_none() {
+                st.bytes += d.len();
             }
         }
-        Ok(mp4::fragment(n as u32 + 1, &runs))
+        // a full PGS track is tens of MB at most, but don't keep more than 48 MB: drop what's far away
+        const MAX: usize = 48 * 1024 * 1024;
+        if st.bytes > MAX {
+            let here = self.segments.get(n).map(|s| self.secs(s.start) * 1000.0).unwrap_or(0.0) as i64;
+            let far: Vec<i64> = st.events.keys().copied().filter(|t| (t - here).abs() > 10 * 60 * 1000).collect();
+            for t in far {
+                if let Some(d) = st.events.remove(&t) {
+                    st.bytes -= d.len();
+                }
+            }
+            let keep: HashSet<usize> = st
+                .covered
+                .iter()
+                .copied()
+                .filter(|m| self.segments.get(*m).map(|s| ((self.secs(s.start) * 1000.0) as i64 - here).abs() <= 10 * 60 * 1000).unwrap_or(false))
+                .collect();
+            st.covered = keep;
+        }
+    }
+
+    /// shows PGS track `index` (None = none)
+    pub fn pgs_select(&self, index: Option<usize>) {
+        let index = index.filter(|i| *i < self.pgs_tracks.len());
+        {
+            let mut st = self.pgs.lock().unwrap();
+            if st.track == index {
+                return;
+            }
+            *st = PgsStore { track: index, ..Default::default() };
+        }
+        if index.is_none() {
+            return;
+        }
+        // segments built already
+        let built: Vec<(usize, Arc<Built>)> =
+            self.cache.lock().unwrap().iter().filter_map(|(n, c)| c.get().map(|b| (*n, b.clone()))).collect();
+        for (n, b) in built {
+            self.absorb_pgs(n, &b);
+        }
+    }
+
+    fn segment_at_ms(&self, ms: i64) -> usize {
+        let ts = self.header.timescale as i64;
+        let t = (ms.max(0) as i128 * 1_000_000 / ts as i128) as u64;
+        self.segments.iter().rposition(|s| s.start <= t).unwrap_or(0)
+    }
+
+    /// The PGS subtitle on screen at `ms` (player time), or None. Segments not read yet are fetched
+    /// in the background: the next call has them.
+    pub fn pgs_at(self: &Arc<Self>, ms: i64, known_id: i64) -> Option<PgsFrame> {
+        let n = self.segment_at_ms(ms);
+        let (track, need, key, blocks) = {
+            let mut st = self.pgs.lock().unwrap();
+            let track = st.track?;
+            let mut need = vec![];
+            for m in [n, n + 1] {
+                if m < self.segments.len() && !st.covered.contains(&m) && st.fetching.insert(m) {
+                    need.push(m);
+                }
+            }
+            let latest = st.events.range(..=ms).next_back().map(|(k, _)| *k);
+            let mut out = (track, need, None, vec![]);
+            if let Some(key) = latest {
+                // everything between that display set and now must have been seen
+                let from = self.segment_at_ms(key);
+                if (from..=n).all(|m| st.covered.contains(&m)) {
+                    out.2 = Some(key);
+                    if st.last.as_ref().map(|(k, _)| *k) != Some(key) {
+                        let mut blocks: Vec<Arc<Vec<u8>>> = vec![];
+                        for (_, d) in st.events.range(..=key).rev() {
+                            blocks.push(d.clone());
+                            if pgs::is_refresh(d) || blocks.len() >= 64 {
+                                break;
+                            }
+                        }
+                        blocks.reverse();
+                        out.3 = blocks;
+                    }
+                }
+            }
+            out
+        };
+        for m in need {
+            let me = self.clone();
+            tokio::spawn(async move {
+                if let Ok(b) = me.segment_no_prefetch(m).await {
+                    me.absorb_pgs(m, &b);
+                }
+                me.pgs.lock().unwrap().fetching.remove(&m);
+            });
+        }
+        let key = key?;
+        let bitmap = {
+            let mut st = self.pgs.lock().unwrap();
+            if st.track != Some(track) {
+                return None;
+            }
+            match &st.last {
+                Some((k, b)) if *k == key => b.clone(),
+                _ => {
+                    let refs: Vec<&[u8]> = blocks.iter().map(|b| b.as_slice()).collect();
+                    let b = if refs.is_empty() { None } else { pgs::render(&refs).map(Arc::new) };
+                    st.last = Some((key, b.clone()));
+                    b
+                }
+            }
+        }?;
+        let id = key ^ (((track as i64) + 1) << 48);
+        Some(PgsFrame {
+            id,
+            canvas_w: bitmap.canvas_w,
+            canvas_h: bitmap.canvas_h,
+            x: bitmap.x,
+            y: bitmap.y,
+            w: bitmap.w,
+            h: bitmap.h,
+            rgba: if id == known_id { vec![] } else { bitmap.rgba.clone() },
+        })
     }
 
     async fn segment(self: &Arc<Self>, n: usize) -> Result<Arc<Built>, RemuxError> {
@@ -700,6 +1063,39 @@ async fn route(srv: &Arc<Server>, path: &str) -> (u16, &'static str, Option<Arc<
     if file == "init.mp4" {
         return (200, "video/mp4", Some(Arc::new(s.init.clone())));
     }
+    if let Some(k) = file.strip_prefix("audio").and_then(|r| r.strip_suffix(".m3u8")).and_then(|k| k.parse::<usize>().ok()) {
+        return match s.audio_playlist(k) {
+            Some(p) => (200, "application/vnd.apple.mpegurl", Some(Arc::new(p.into_bytes()))),
+            None => (404, "text/plain", None),
+        };
+    }
+    if let Some(k) = file.strip_prefix("ainit").and_then(|r| r.strip_suffix(".mp4")).and_then(|k| k.parse::<usize>().ok()) {
+        return match s.audio_inits.get(k) {
+            Some(i) => (200, "video/mp4", Some(Arc::new(i.clone()))),
+            None => (404, "text/plain", None),
+        };
+    }
+    if let Some((k, n)) = file
+        .strip_prefix('a')
+        .and_then(|r| r.strip_suffix(".m4s"))
+        .and_then(|r| r.split_once('_'))
+        .and_then(|(k, n)| Some((k.parse::<usize>().ok()?, n.parse::<usize>().ok()?)))
+    {
+        if k >= s.audio_inits.len() {
+            return (404, "text/plain", None);
+        }
+        // the video playlist drives the read-ahead; audio follows the same segments
+        return match s.segment_no_prefetch(n).await {
+            Ok(b) => match b.audio.get(k) {
+                Some(m) => (200, "video/iso.segment", Some(m.clone())),
+                None => (404, "text/plain", None),
+            },
+            Err(x) => {
+                tracing::warn!("remux audio {k} segment {n}: {x}");
+                (502, "text/plain", None)
+            }
+        };
+    }
     if let Some(n) = file.strip_suffix(".m4s").and_then(|n| n.parse::<usize>().ok()) {
         return match s.segment(n).await {
             Ok(b) => (200, "video/iso.segment", Some(b.media.clone())),
@@ -769,6 +1165,26 @@ pub async fn open_url(url: String, headers: HashMap<String, String>) -> Result<O
 /// Local file (tests)
 pub async fn open_file(path: PathBuf) -> Result<Opened, RemuxError> {
     runtime().spawn(open_source(Source::File(path))).await.map_err(|x| e(x.to_string()))?
+}
+
+fn session_for(playlist_url: &str) -> Option<Arc<Session>> {
+    let srv = SERVER.get()?;
+    let id = playlist_url.rsplit('/').nth(1).unwrap_or_default().to_string();
+    srv.sessions.lock().unwrap().iter().find(|(k, _)| *k == id).map(|(_, s)| s.clone())
+}
+
+/// Selects the PGS track drawn over the native player (None = none)
+pub fn pgs_select(playlist_url: &str, index: Option<usize>) {
+    if let Some(s) = session_for(playlist_url) {
+        s.pgs_select(index);
+    }
+}
+
+/// The PGS subtitle on screen at `time_ms` of the stream at `playlist_url`
+pub fn pgs_at(playlist_url: &str, time_ms: i64, known_id: i64) -> Option<PgsFrame> {
+    let s = session_for(playlist_url)?;
+    let _guard = runtime().enter();
+    s.pgs_at(time_ms, known_id)
 }
 
 /// Drops a session (the player closed or moved on)

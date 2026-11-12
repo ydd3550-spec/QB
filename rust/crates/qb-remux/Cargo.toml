@@ -10,6 +10,7 @@ license.workspace = true
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-util", "rt-multi-thread", "sync", "time"] }
 tracing = { workspace = true }
+flate2 = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

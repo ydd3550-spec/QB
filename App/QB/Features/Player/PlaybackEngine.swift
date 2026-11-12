@@ -19,6 +19,8 @@ struct TrackOption: Identifiable, Hashable {
     let id: String
     let name: String
     var language: String?
+    /// the line under the name in the tracks sheet (nil = the default for its section)
+    var detail: String? = nil
 }
 
 /// سبب الفشل: هل يستاهل نجرب VLC؟

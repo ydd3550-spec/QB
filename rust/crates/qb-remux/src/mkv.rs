@@ -32,6 +32,13 @@ const SAMPLING_FREQUENCY: u32 = 0xB5;
 const OUTPUT_SAMPLING_FREQUENCY: u32 = 0x78B5;
 const CHANNELS: u32 = 0x9F;
 const CONTENT_ENCODINGS: u32 = 0x6D80;
+const CONTENT_ENCODING: u32 = 0x6240;
+const CONTENT_ENCODING_SCOPE: u32 = 0x5032;
+const CONTENT_ENCODING_TYPE: u32 = 0x5033;
+const CONTENT_COMPRESSION: u32 = 0x5034;
+const CONTENT_COMP_ALGO: u32 = 0x4254;
+const CONTENT_COMP_SETTINGS: u32 = 0x4255;
+const CONTENT_ENCRYPTION: u32 = 0x5035;
 pub const CLUSTER: u32 = 0x1F43B675;
 pub const CUES: u32 = 0x1C53BB6B;
 const CUE_POINT: u32 = 0xBB;
@@ -67,8 +74,99 @@ pub struct Track {
     pub rate: f64,
     pub out_rate: f64,
     pub channels: u32,
-    /// compressed / encrypted content (header stripping etc.): we can't pass it through
+    /// content we can't undo (encryption, bzlib/lzo, several stacked encodings): never passed through
     pub encoded: bool,
+    /// zlib / header stripping on the frames, undone in `decode_frame`
+    pub encoding: Encoding,
+    /// CodecPrivate came zlib-compressed (inflated after the TrackEntry is read)
+    pub private_compressed: bool,
+}
+
+/// Matroska ContentEncoding we know how to undo. mkvmerge zlib-compresses PGS / VobSub by default,
+/// and older muxes strip the first bytes of every AC-3 / DTS / H.264 frame ("header removal").
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Encoding {
+    #[default]
+    None,
+    Zlib,
+    Strip(Vec<u8>),
+}
+
+impl Track {
+    /// the frame as the codec expects it (decompressed / stripped header put back)
+    pub fn decode_frame(&self, data: Vec<u8>) -> Option<Vec<u8>> {
+        match &self.encoding {
+            Encoding::None => Some(data),
+            Encoding::Strip(h) => {
+                let mut v = Vec::with_capacity(h.len() + data.len());
+                v.extend_from_slice(h);
+                v.extend_from_slice(&data);
+                Some(v)
+            }
+            Encoding::Zlib => inflate(&data),
+        }
+    }
+}
+
+pub fn inflate(data: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::with_capacity(data.len() * 3);
+    flate2::read::ZlibDecoder::new(data).read_to_end(&mut out).ok()?;
+    Some(out)
+}
+
+/// Reads ContentEncodings: sets `encoding` when it's one zlib / header-stripping compression of the
+/// frames, `encoded` (= unusable) for anything else. Compressed CodecPrivate is inflated in place.
+fn parse_content_encodings(b: &[u8], e: &Element, tr: &mut Track) {
+    let encs: Vec<Element> = ebml::children(b, e.data, e.end(b.len())).into_iter().filter(|c| c.id == CONTENT_ENCODING).collect();
+    if encs.len() != 1 {
+        tr.encoded = !encs.is_empty();
+        return;
+    }
+    let mut scope = 1u64;
+    let mut kind = 0u64;
+    let mut algo: Option<u64> = None;
+    let mut settings = Vec::new();
+    for c in ebml::children(b, encs[0].data, encs[0].end(b.len())) {
+        match c.id {
+            CONTENT_ENCODING_SCOPE => scope = ebml::uint(b, &c),
+            CONTENT_ENCODING_TYPE => kind = ebml::uint(b, &c),
+            CONTENT_ENCRYPTION => kind = 1,
+            CONTENT_COMPRESSION => {
+                algo = Some(0);
+                for x in ebml::children(b, c.data, c.end(b.len())) {
+                    match x.id {
+                        CONTENT_COMP_ALGO => algo = Some(ebml::uint(b, &x)),
+                        CONTENT_COMP_SETTINGS => settings = ebml::bytes(b, &x).to_vec(),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let enc = match (kind, algo) {
+        // mkvmerge leaves an empty ContentEncoding when header-removal analysis found nothing to strip
+        (0, None) => return,
+        (0, Some(0)) => Encoding::Zlib,
+        (0, Some(3)) => Encoding::Strip(settings),
+        _ => {
+            tr.encoded = true;
+            return;
+        }
+    };
+    if scope & 2 != 0 {
+        // CodecPrivate itself is compressed (only zlib makes sense there)
+        if enc == Encoding::Zlib {
+            tr.private_compressed = true;
+        } else {
+            tr.encoded = true;
+            return;
+        }
+    }
+    if scope & 1 != 0 {
+        tr.encoding = enc;
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -190,7 +288,7 @@ pub fn parse_tracks(b: &[u8], e: &Element, h: &mut Header) {
                 LANGUAGE => tr.language = ebml::string(b, &c),
                 NAME => tr.name = ebml::string(b, &c),
                 FLAG_FORCED => tr.forced = ebml::uint(b, &c) != 0,
-                CONTENT_ENCODINGS => tr.encoded = true,
+                CONTENT_ENCODINGS => parse_content_encodings(b, &c, &mut tr),
                 VIDEO => {
                     for v in ebml::children(b, c.data, c.end(b.len())) {
                         match v.id {
@@ -219,6 +317,12 @@ pub fn parse_tracks(b: &[u8], e: &Element, h: &mut Header) {
             }
             if tr.channels == 0 {
                 tr.channels = 1;
+            }
+        }
+        if tr.private_compressed && !tr.private.is_empty() {
+            match inflate(&tr.private) {
+                Some(p) => tr.private = p,
+                None => tr.encoded = true,
             }
         }
         h.tracks.push(tr);

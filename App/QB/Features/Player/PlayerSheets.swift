@@ -24,7 +24,7 @@ struct TracksSheet: View {
                 if !player.audioTracks.isEmpty {
                     Section(L("الصوت")) {
                         ForEach(player.audioTracks) { t in
-                            row(t.name, selected: player.selectedAudio == t.id) { player.selectAudio(t.id) }
+                            row(t.name, detail: t.detail, selected: player.selectedAudio == t.id) { player.selectAudio(t.id) }
                         }
                     }
                 }
@@ -34,7 +34,7 @@ struct TracksSheet: View {
                         player.subtitlesOff()
                     }
                     ForEach(player.embeddedSubtitles) { t in
-                        row(t.name, detail: L("داخل الملف"), selected: player.selectedEmbedded == t.id) { player.selectEmbedded(t.id) }
+                        row(t.name, detail: t.detail ?? L("داخل الملف"), selected: player.selectedEmbedded == t.id) { player.selectEmbedded(t.id) }
                     }
                 }
 

@@ -188,5 +188,8 @@
   "انتسخ": "Copied",
   "تكبير لملء الشاشة": "Zoom to fill",
   "الحجم الأصلي": "Original size",
-  "الأصلي": "Native"
+  "الأصلي": "Native",
+  "إجبارية": "Forced",
+  "يشتغل بـ VLC": "Plays in VLC",
+  "مسار": "Track"
 }

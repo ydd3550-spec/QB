@@ -199,6 +199,8 @@ struct Eac3Frame {
     acmod: u32,
     lfeon: u32,
     bsid: u32,
+    /// dependent substreams: custom channel map (None = same layout as acmod)
+    chanmap: Option<u32>,
 }
 
 fn eac3_frame(f: &[u8]) -> Option<Eac3Frame> {
@@ -220,21 +222,56 @@ fn eac3_frame(f: &[u8]) -> Option<Eac3Frame> {
     let acmod = r.get(3)?;
     let lfeon = r.get(1)?;
     let bsid = r.get(5)?;
-    Some(Eac3Frame { strmtyp, substream, size: (frmsiz as usize + 1) * 2, fscod, rate, blocks, acmod, lfeon, bsid })
+    let mut chanmap = None;
+    if strmtyp == 1 {
+        // dialnorm + compr (twice for 1+1 dual mono), then the channel map of the dependent substream
+        let mut ok = true;
+        for _ in 0..(if acmod == 0 { 2 } else { 1 }) {
+            ok &= r.get(5).is_some();
+            if r.get(1) == Some(1) {
+                ok &= r.get(8).is_some();
+            }
+        }
+        if ok && r.get(1) == Some(1) {
+            chanmap = r.get(16);
+        }
+    }
+    Some(Eac3Frame { strmtyp, substream, size: (frmsiz as usize + 1) * 2, fscod, rate, blocks, acmod, lfeon, bsid, chanmap })
 }
 
 fn eac3_config(block: &[u8]) -> Result<(Vec<u8>, u32), String> {
     let first = eac3_frame(block).ok_or("eac3 header")?;
-    // dependent substreams (7.1) or several programs need a full dec3: leave those to VLC
+    if first.strmtyp == 1 {
+        return Err("E-AC-3 starts with a dependent substream".into());
+    }
+    // one access unit: independent substream 0, then its dependent substreams (5.1 core + extra
+    // channels = 7.1). Several independent programs stay with VLC.
     let mut p = 0;
+    let mut num_dep = 0u32;
+    let mut chan_loc = 0u32;
+    let mut bytes_total = 0u64;
     while p < block.len() {
         let Some(fr) = eac3_frame(&block[p..]) else { break };
-        if fr.strmtyp == 1 || fr.substream != 0 {
-            return Err("E-AC-3 with dependent substreams".into());
+        match (fr.strmtyp, fr.substream) {
+            (1, _) => {
+                num_dep += 1;
+                // same as ffmpeg's movenc: dec3 chan_loc = bits 5..9 of the custom channel map
+                chan_loc |= match fr.chanmap {
+                    Some(m) => (m >> 5) & 0x1f,
+                    None => fr.acmod,
+                };
+            }
+            (_, 0) if p == 0 => {}
+            (_, 0) => break, // next access unit (block holds several)
+            _ => return Err("E-AC-3 with several independent programs".into()),
         }
+        bytes_total += fr.size as u64;
         p += fr.size.max(2);
     }
-    let kbps = (first.size as u64 * 8 * first.rate as u64 / (first.blocks as u64 * 256) / 1000) as u32;
+    if num_dep > 15 {
+        return Err("E-AC-3 dependent substreams".into());
+    }
+    let kbps = (bytes_total * 8 * first.rate as u64 / (first.blocks as u64 * 256) / 1000) as u32;
     let fscod = if first.fscod == 3 { 3 } else { first.fscod };
     let mut w = BitW { out: vec![], n: 0 };
     w.put(13, kbps.min(8191));
@@ -247,8 +284,12 @@ fn eac3_config(block: &[u8]) -> Result<(Vec<u8>, u32), String> {
     w.put(3, first.acmod);
     w.put(1, first.lfeon);
     w.put(3, 0); // reserved
-    w.put(4, 0); // num_dep_sub
-    w.put(1, 0); // reserved
+    w.put(4, num_dep);
+    if num_dep > 0 {
+        w.put(9, chan_loc);
+    } else {
+        w.put(1, 0); // reserved
+    }
     Ok((w.out, first.rate))
 }
 

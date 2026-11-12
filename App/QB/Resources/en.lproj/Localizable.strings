@@ -7,6 +7,7 @@
 "أضف لمكتبتي" = "Add to My Library";
 "أفلام" = "Movies";
 "أفلام، مسلسلات…" = "Movies, series…";
+"إجبارية" = "Forced";
 "إخراج" = "Director";
 "إضافات" = "Add-ons";
 "إعادة المحاولة" = "Retry";
@@ -165,6 +166,7 @@
 "متأخرة" = "Delayed";
 "متقدّمة" = "Ahead";
 "مزامنة الترجمة" = "Subtitle sync";
+"مسار" = "Track";
 "مسح" = "Clear";
 "مسح الذاكرة المؤقتة" = "Clear cache";
 "مسح الذاكرة المؤقتة؟" = "Clear cache?";
@@ -186,3 +188,4 @@
 "نسخ الرابط" = "Copy link";
 "نص الخطأ" = "Error details";
 "هذا شكل الترجمة" = "This is how subtitles look";
+"يشتغل بـ VLC" = "Plays in VLC";

@@ -58,7 +58,7 @@ pub struct VideoInit<'a> {
     pub height: u32,
 }
 
-pub fn init(video: &VideoInit, audio: Option<&AudioOut>, lang: &str) -> Vec<u8> {
+pub fn init(video: Option<&VideoInit>, audio: Option<&AudioOut>, lang: &str) -> Vec<u8> {
     let mut w = W::new();
     let p = w.open(b"ftyp");
     w.bytes(b"iso6");
@@ -82,13 +82,16 @@ pub fn init(video: &VideoInit, audio: Option<&AudioOut>, lang: &str) -> Vec<u8> 
     w.u32(3);
     w.close(p);
 
-    trak(&mut w, VIDEO_ID, VIDEO_TIMESCALE, "und", |w| video_entry(w, video), Some((video.width, video.height)));
+    let mut ids = vec![];
+    if let Some(video) = video {
+        trak(&mut w, VIDEO_ID, VIDEO_TIMESCALE, "und", |w| video_entry(w, video), Some((video.width, video.height)));
+        ids.push(VIDEO_ID);
+    }
     if let Some(a) = audio {
         trak(&mut w, AUDIO_ID, a.rate, lang, |w| audio_entry(w, a), None);
     }
 
     let mvex = w.open(b"mvex");
-    let mut ids = vec![VIDEO_ID];
     if audio.is_some() {
         ids.push(AUDIO_ID);
     }

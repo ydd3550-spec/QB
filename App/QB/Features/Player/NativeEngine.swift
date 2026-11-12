@@ -7,10 +7,84 @@ final class PlayerLayerView: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 
+    /// ترجمة صورية (PGS) فوق الفيديو: صورتها ومكانها على لوحة الترجمة (= إطار الفيديو)
+    private let imageSubLayer = CALayer()
+    private var imageSub: (canvas: CGSize, rect: CGRect)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        imageSubLayer.contentsGravity = .resize
+        imageSubLayer.isHidden = true
+        imageSubLayer.zPosition = 10
+        imageSubLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "hidden": NSNull()]
+        layer.addSublayer(imageSubLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         // الطبقة هي طبقة المنظر نفسه، بس نتأكد إن ما فيه حركة ناقصة بعد التدوير أو القفل
         playerLayer.removeAllAnimations()
+        placeImageSubtitle(animated: false)
+    }
+
+    func setImageSubtitle(_ image: CGImage?, canvas: CGSize, rect: CGRect) {
+        guard let image, canvas.width > 0, canvas.height > 0 else {
+            imageSub = nil
+            imageSubLayer.contents = nil
+            imageSubLayer.isHidden = true
+            return
+        }
+        imageSub = (canvas, rect)
+        imageSubLayer.contents = image
+        placeImageSubtitle(animated: false)
+        imageSubLayer.isHidden = false
+    }
+
+    /// اللوحة تنطبق على مكان الفيديو الفعلي، وبالتكبير (ملء الشاشة) الترجمة تنسحب لداخل الشاشة
+    /// عشان ما تنقص من تحت أو من الجوانب
+    func placeImageSubtitle(animated: Bool) {
+        guard let s = imageSub else { return }
+        var video = playerLayer.videoRect
+        if video.isEmpty || !video.width.isFinite { video = bounds }
+        guard video.width > 0, video.height > 0 else { return }
+        let sx = video.width / s.canvas.width
+        let sy = video.height / s.canvas.height
+        var r = CGRect(x: video.minX + s.rect.minX * sx, y: video.minY + s.rect.minY * sy,
+                       width: s.rect.width * sx, height: s.rect.height * sy)
+        let visible = bounds.insetBy(dx: 6, dy: 6)
+        if visible.width > 0, r.width > visible.width {
+            let k = visible.width / r.width
+            r.size = CGSize(width: r.width * k, height: r.height * k)
+        }
+        if visible.height > 0, r.height > visible.height {
+            let k = visible.height / r.height
+            r.size = CGSize(width: r.width * k, height: r.height * k)
+        }
+        r.origin.x = min(max(r.minX, visible.minX), visible.maxX - r.width)
+        r.origin.y = min(max(r.minY, visible.minY), visible.maxY - r.height)
+        CATransaction.begin()
+        if animated {
+            imageSubLayer.removeAnimation(forKey: "place")
+            let from = imageSubLayer.presentation()?.frame ?? imageSubLayer.frame
+            imageSubLayer.frame = r
+            let move = CABasicAnimation(keyPath: "position")
+            move.fromValue = NSValue(cgPoint: CGPoint(x: from.midX, y: from.midY))
+            move.duration = 0.25
+            let size = CABasicAnimation(keyPath: "bounds.size")
+            size.fromValue = NSValue(cgSize: from.size)
+            size.duration = 0.25
+            let group = CAAnimationGroup()
+            group.animations = [move, size]
+            group.duration = 0.25
+            imageSubLayer.add(group, forKey: "place")
+        } else {
+            CATransaction.setDisableActions(true)
+            imageSubLayer.frame = r
+        }
+        CATransaction.commit()
     }
 }
 
@@ -398,6 +472,18 @@ final class NativeEngine: NSObject, PlaybackEngine {
         CATransaction.setAnimationDuration(0.25)
         view.playerLayer.videoGravity = gravity
         CATransaction.commit()
+        view.placeImageSubtitle(animated: true)
+    }
+
+    /// PGS subtitle bitmap over the video (nil hides it)
+    func setImageSubtitle(_ image: CGImage?, canvas: CGSize, rect: CGRect) {
+        view.setImageSubtitle(image, canvas: canvas, rect: rect)
+    }
+
+    /// AVPlayer's own subtitle selection off (a PGS track drawn by the app replaces it)
+    func deselectLegible() {
+        guard let g = legibleGroup else { return }
+        item?.select(nil, in: g)
     }
 
     func setAutoPiP(_ on: Bool) {

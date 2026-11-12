@@ -214,6 +214,47 @@ pub struct RemuxedStream {
     pub video_codec: String,
     pub audio_codec: String,
     pub duration_s: f64,
+    /// audio tracks the native player gets (HLS renditions when more than one)
+    pub audio_tracks: u32,
+    /// PGS image subtitles the app draws over the native player
+    pub pgs: Vec<RemuxPgsTrack>,
+    /// tracks only VLC can play (DTS / TrueHD audio, VobSub ...); picking one switches to VLC
+    pub vlc_only: Vec<RemuxVlcTrack>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RemuxPgsTrack {
+    pub index: u32,
+    pub ordinal: u32,
+    pub name: String,
+    pub language: String,
+    pub forced: bool,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RemuxVlcTrack {
+    /// "audio" or "subtitle"
+    pub kind: String,
+    /// position among the file's tracks of that kind (VLC's order)
+    pub ordinal: u32,
+    pub name: String,
+    pub language: String,
+    pub codec: String,
+}
+
+/// A PGS subtitle bitmap: straight RGBA `w*h*4` at (x, y) on a `canvas_w x canvas_h` canvas (the
+/// video frame). `rgba` is empty when it's the subtitle `known_id` already names.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct RemuxPgsFrame {
+    pub id: i64,
+    pub canvas_w: u32,
+    pub canvas_h: u32,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub rgba: Vec<u8>,
 }
 
 /// Opens a remote MKV for AVPlayer. An error means it can't be remuxed (codec, no index, ...): use VLC.
@@ -225,6 +266,48 @@ pub async fn remux_open(url: String, headers: std::collections::HashMap<String, 
         video_codec: o.info.video_codec,
         audio_codec: o.info.audio_codec,
         duration_s: o.info.duration_s,
+        audio_tracks: o.info.audio_tracks as u32,
+        pgs: o
+            .info
+            .pgs
+            .into_iter()
+            .map(|t| RemuxPgsTrack {
+                index: t.index as u32,
+                ordinal: t.ordinal as u32,
+                name: t.name,
+                language: t.language,
+                forced: t.forced,
+                is_default: t.default,
+            })
+            .collect(),
+        vlc_only: o
+            .info
+            .vlc_only
+            .into_iter()
+            .map(|t| RemuxVlcTrack { kind: t.kind, ordinal: t.ordinal as u32, name: t.name, language: t.language, codec: t.codec })
+            .collect(),
+    })
+}
+
+/// Shows PGS track `index` of the stream over the native player (None = none)
+#[uniffi::export]
+pub fn remux_pgs_select(playlist_url: String, index: Option<u32>) {
+    qb_remux::pgs_select(&playlist_url, index.map(|i| i as usize));
+}
+
+/// The PGS subtitle on screen at `time_ms`, None when there's none (or that part isn't read yet:
+/// it's fetched in the background, ask again)
+#[uniffi::export]
+pub fn remux_pgs_at(playlist_url: String, time_ms: i64, known_id: i64) -> Option<RemuxPgsFrame> {
+    qb_remux::pgs_at(&playlist_url, time_ms, known_id).map(|f| RemuxPgsFrame {
+        id: f.id,
+        canvas_w: f.canvas_w,
+        canvas_h: f.canvas_h,
+        x: f.x,
+        y: f.y,
+        w: f.w,
+        h: f.h,
+        rgba: f.rgba,
     })
 }
 
