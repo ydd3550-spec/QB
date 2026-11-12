@@ -2,26 +2,6 @@ import SwiftUI
 import QBCore
 import WidgetKit
 
-enum AppTab: Hashable {
-    case home, discover, library, settings, search
-}
-
-/// العنصر اللي نفتح صفحته
-struct MediaRef: Hashable, Sendable {
-    let id: String
-    let kind: MediaKind
-    let name: String
-    let poster: String?
-    let background: String?
-
-    init(id: String, kind: MediaKind, name: String, poster: String? = nil, background: String? = nil) {
-        self.id = id; self.kind = kind; self.name = name; self.poster = poster; self.background = background
-    }
-    init(_ m: MetaPreview) {
-        self.init(id: m.id, kind: m.kind, name: m.name, poster: m.poster, background: m.background)
-    }
-}
-
 /// حالة التطبيق العامة: التبويب الحالي، المشغّل الحالي، الإضافات، والإعدادات
 @Observable
 @MainActor
@@ -39,6 +19,17 @@ final class AppModel {
 
     let player = PlayerModel()
 
+    /// قائمة كمّل المشاهدة (تتحدّث بعد كل حفظ تقدّم)
+    var continueWatching: [WatchProgress] = []
+    /// يزيد كل ما تغيّرت المكتبة أو السجل عشان الشاشات تعيد القراءة
+    var libraryVersion = 0
+    /// يزيد كل ما تغيّرت الإضافات عشان الرئيسية تعيد التحميل
+    var addonsVersion = 0
+
+    /// رسالة عابرة
+    var toast: String?
+    private var toastTask: Task<Void, Never>?
+
     // الإعدادات
     var language: AppLanguage = .arabic
     var appearance: String = "system"
@@ -46,8 +37,10 @@ final class AppModel {
     var preferredEngine: String = "auto"
     var subtitleLang: String = "ara"
     var subtitleSize: Double = 1.0
+    var subtitleBackground = true
     var autoNext = true
     var skipIntroSeconds = 85
+    var autoPiP = true
 
     var colorScheme: ColorScheme? {
         switch appearance {
@@ -65,6 +58,7 @@ final class AppModel {
         L10n.set(language)
         player.app = self
         loadSettings()
+        continueWatching = core?.continueWatching() ?? []
     }
 
     func start() async {
@@ -72,15 +66,23 @@ final class AppModel {
             startupError = L("تعذّر تشغيل النواة")
             return
         }
-        _ = await core.seedDefaultAddons()
+        guard !ready else { return }
+        let seeded = await core.seedDefaultAddons()
         await reloadAddons()
+        if seeded > 0 { addonsVersion += 1 }
         ready = true
-        refreshWidget()
+        refreshContinueWatching()
     }
 
     func reloadAddons() async {
         guard let core else { return }
         addons = await core.addons()
+    }
+
+    /// بعد تثبيت/حذف/ترتيب الإضافات
+    func addonsChanged() async {
+        await reloadAddons()
+        addonsVersion += 1
     }
 
     // MARK: - الإعدادات
@@ -93,8 +95,10 @@ final class AppModel {
         preferredEngine = get("preferred_engine") ?? "auto"
         subtitleLang = get("subtitle_lang") ?? (language == .arabic ? "ara" : "eng")
         subtitleSize = Double(get("subtitle_size") ?? "") ?? 1.0
+        subtitleBackground = (get("subtitle_background") ?? "1") == "1"
         autoNext = (get("auto_next") ?? "1") == "1"
         skipIntroSeconds = Int(get("skip_intro_seconds") ?? "") ?? 85
+        autoPiP = (get("auto_pip") ?? "1") == "1"
     }
 
     func save(_ key: String, _ value: String) {
@@ -102,9 +106,11 @@ final class AppModel {
     }
 
     func setLanguage(_ lang: AppLanguage) {
-        language = lang
+        guard lang != language else { return }
         L10n.set(lang)
+        language = lang
         save("language", lang.rawValue)
+        refreshWidget()
     }
 
     // MARK: - التبويبات
@@ -145,18 +151,66 @@ final class AppModel {
         if url.scheme == "qb", url.host() == "title" {
             let parts = url.pathComponents.filter { $0 != "/" }
             if parts.count >= 2, let kind = MediaKind(wire: parts[0]) {
+                let id = parts[1...].joined(separator: "/")
                 let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "name" }?.value ?? ""
                 tab = .home
-                paths[.home] = NavigationPath([MediaRef(id: parts[1], kind: kind, name: name)])
+                paths[.home] = NavigationPath([MediaRef(id: id, kind: kind, name: name)])
             }
+        }
+    }
+
+    // MARK: - المكتبة والتقدّم
+
+    func refreshContinueWatching() {
+        continueWatching = core?.continueWatching() ?? []
+        refreshWidget()
+    }
+
+    func removeProgress(_ mediaId: String) {
+        try? core?.removeProgress(mediaId: mediaId)
+        refreshContinueWatching()
+    }
+
+    func isInLibrary(_ id: String) -> Bool {
+        (try? core?.inLibrary(mediaId: id)) ?? false
+    }
+
+    /// يضيف أو يشيل من المكتبة، ويرجّع الحالة الجديدة
+    @discardableResult
+    func toggleLibrary(_ ref: MediaRef) -> Bool {
+        guard let core else { return false }
+        do {
+            if isInLibrary(ref.id) {
+                try core.removeFromLibrary(mediaId: ref.id)
+                libraryVersion += 1
+                showToast(L("انشال من مكتبتي"))
+                return false
+            }
+            try core.addToLibrary(item: LibraryItem(mediaId: ref.id, kind: ref.kind, title: ref.name, poster: ref.poster, addedAt: CoreClient.now))
+            libraryVersion += 1
+            showToast(L("انضاف لمكتبتي"))
+            return true
+        } catch {
+            showToast(CoreClient.message(for: error))
+            return isInLibrary(ref.id)
+        }
+    }
+
+    // MARK: - الرسائل
+
+    func showToast(_ text: String) {
+        toastTask?.cancel()
+        withAnimation(Motion.standard) { toast = text }
+        toastTask = Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.standard) { toast = nil }
         }
     }
 
     // MARK: - ويدجت كمّل المشاهدة
 
     func refreshWidget() {
-        guard let core else { return }
-        WidgetBridge.write(core.continueWatching())
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetBridge.write(continueWatching, language: language)
     }
 }
