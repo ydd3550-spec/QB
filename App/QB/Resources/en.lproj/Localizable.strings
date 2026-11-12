@@ -3,6 +3,7 @@
 "10 ثواني" = "10 seconds";
 "AirPlay" = "AirPlay";
 "آخر المشاهدات" = "Recently watched";
+"أرسل ملاحظاتك" = "Send feedback";
 "أصلي" = "Native";
 "أضف لمكتبتي" = "Add to My Library";
 "أفلام" = "Movies";
@@ -79,6 +80,7 @@
 "تثبيت" = "Install";
 "تثبيت إضافة" = "Install add-on";
 "تخطّي المقدمة" = "Skip intro";
+"تدوير الشاشة" = "Rotate screen";
 "ترجمات" = "Subtitles";
 "تشتغل كل إضافات Stremio. الروابط اللي تبدأ بـ stremio:// تشتغل بعد" = "Any Stremio add-on works. Links starting with stremio:// work too";
 "تشغيل" = "Play";
@@ -100,7 +102,6 @@
 "ثبّت إضافات مصادر من الإعدادات ← الإضافات" = "Install source add-ons from Settings → Add-ons";
 "ثبّت إضافة فيها كتالوجات من الإعدادات ← الإضافات" = "Install an add-on with catalogs from Settings → Add-ons";
 "جاري التثبيت…" = "Installing…";
-"جاري التحميل…" = "Loading…";
 "جاري الفحص" = "Checking";
 "جرّب اسم ثاني أو بالإنجليزي" = "Try another name or search in English";
 "جرّب مرة ثانية أو اختر مصدر ثاني" = "Try again or pick another source";
