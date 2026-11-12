@@ -28,6 +28,8 @@ enum Typo {
     static let bodyMedium = font(.medium, 16, .body)
     static let info = font(.regular, 14, .subheadline)
     static let infoMedium = font(.medium, 14, .subheadline)
+    /// نص الأزرار (مدمج)
+    static let button = font(.semibold, 15, .subheadline)
     static let caption = font(.medium, 12, .caption)
     static let badge = font(.bold, 11, .caption2)
     /// الأرقام المتغيرة (الوقت) بعرض ثابت عشان ما ترجف

@@ -139,3 +139,88 @@ async fn async_write_goes_through_blocking_pool() {
     core.write(|s| s.set_setting("k", "v")).await.unwrap();
     assert_eq!(core.store().setting("k").unwrap().as_deref(), Some("v"));
 }
+
+// ---------- تشغيل النواة: لازم يكون idempotent ----------
+
+fn fresh_dir(name: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("qb-start-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    d
+}
+
+#[test]
+fn starts_twice_in_same_dir() {
+    let d = fresh_dir("twice");
+    let p = d.to_string_lossy().to_string();
+    let a = Core::new(&p).expect("first start");
+    a.store().save_addon(&manifest("http://127.0.0.1:9/a/manifest.json", "A")).unwrap();
+    drop(a);
+    let b = Core::new(&p).expect("second start");
+    assert_eq!(b.store().addons().unwrap().len(), 1);
+    // وثالثة والثانية لسه مفتوحة (زر إعادة المحاولة)
+    let _c = Core::new(&p).expect("third start while second is open");
+}
+
+#[test]
+fn starts_after_partial_start() {
+    // مجلد موجود، مجلد الكاش موجود، وقاعدة فاضية بحجم صفر وملف wal خربان
+    let d = fresh_dir("partial");
+    std::fs::create_dir_all(d.join("cache")).unwrap();
+    std::fs::write(d.join("qb.sqlite"), b"").unwrap();
+    std::fs::write(d.join("qb.sqlite-wal"), b"garbage-wal").unwrap();
+    Core::new(&d.to_string_lossy()).expect("start after partial start");
+}
+
+#[test]
+fn starts_with_leftover_backup_files() {
+    let d = fresh_dir("backup");
+    std::fs::create_dir_all(&d).unwrap();
+    let db = d.join("qb.sqlite");
+    let stamp = qb_store::now();
+    // ملفات .broken قديمة بنفس الأسماء اللي ممكن تنستخدم الحين
+    for s in ["", "-wal", "-shm"] {
+        for st in [stamp, stamp + 1] {
+            std::fs::write(format!("{}.broken-{st}{s}", db.display()), b"old").unwrap();
+        }
+    }
+    std::fs::write(&db, b"this is not a sqlite database at all, just garbage bytes").unwrap();
+    let core = Core::new(&d.to_string_lossy()).expect("start with leftover backups");
+    core.store().save_addon(&manifest("http://127.0.0.1:9/a/manifest.json", "A")).unwrap();
+    // الخربان انحفظ جنب باسم جديد وما انمسح أي احتياطي قديم
+    let broken = std::fs::read_dir(&d).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains(".broken-")).count();
+    assert!(broken >= 7, "backups: {broken}");
+}
+
+#[test]
+fn cache_path_is_a_file_does_not_block_start() {
+    let d = fresh_dir("cachefile");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("cache"), b"not a dir").unwrap();
+    Core::new(&d.to_string_lossy()).expect("start when cache path is a file");
+}
+
+#[test]
+fn memory_mode_starts_repeatedly_without_files() {
+    for _ in 0..3 {
+        Core::in_memory().expect("memory start");
+    }
+}
+
+#[test]
+fn start_failure_reports_stage_and_panic_location() {
+    let e = startup::stage("demo", || -> Result<(), CoreError> {
+        let r: Result<(), std::io::Error> = Err(std::io::Error::from_raw_os_error(17));
+        r.unwrap();
+        Ok(())
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(e.contains("demo: panic at "), "{e}");
+    assert!(e.contains("tests.rs:"), "{e}");
+    assert!(e.contains("AlreadyExists"), "{e}");
+}
+
+#[test]
+fn clock_check_passes() {
+    check_clock().unwrap();
+}

@@ -81,14 +81,23 @@ private struct StartupErrorView: View {
                     .padding(14)
                     .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
                     .padding(.horizontal, 20)
-                    GlassButton(title: copied ? L("انتسخ") : L("نسخ الخطأ"), systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = detail
-                        copied = true
+                }
+                // زرّين بنفس المقاس والستايل، جنب بعض
+                HStack(spacing: 12) {
+                    if let detail {
+                        GlassButton(title: copied ? L("انتسخ") : L("نسخ الخطأ"),
+                                    systemImage: copied ? "checkmark" : "doc.on.doc",
+                                    width: ButtonMetrics.pairWidth) {
+                            UIPasteboard.general.string = detail
+                            copied = true
+                        }
+                    }
+                    GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise", width: ButtonMetrics.pairWidth) {
+                        copied = false
+                        Task { await model.retryStartup() }
                     }
                 }
-                GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise") {
-                    Task { await model.retryStartup() }
-                }
+                .padding(.top, 4)
                 .padding(.bottom, 30)
             }
             .padding(.top, 40)

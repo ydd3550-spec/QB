@@ -22,22 +22,36 @@ struct GlassCircleButton: View {
     }
 }
 
+/// مقاسات الأزرار في كل التطبيق: مدمجة، ونفس الارتفاع للكل
+enum ButtonMetrics {
+    static let height: CGFloat = 40
+    /// الزر العريض الوحيد (تشغيل في صفحة التفاصيل)
+    static let wideHeight: CGFloat = 46
+    static let horizontalPadding: CGFloat = 16
+    /// عرض موحّد للأزرار اللي تنحط جنب بعض
+    static let pairWidth: CGFloat = 150
+    static let font = Typo.button
+}
+
 /// الزر الرئيسي (تشغيل): زجاج ملوّن بالذهبي
 struct PrimaryButton: View {
     let title: String
     var systemImage: String = "play.fill"
     var expand = false
+    var width: CGFloat? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(Typo.headline)
+                .font(ButtonMetrics.font)
                 .foregroundStyle(Palette.onAccent)
                 .lineLimit(1)
-                .padding(.horizontal, 22)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, ButtonMetrics.horizontalPadding)
+                .frame(width: width)
                 .frame(maxWidth: expand ? .infinity : nil)
-                .frame(height: 50)
+                .frame(height: expand ? ButtonMetrics.wideHeight : ButtonMetrics.height)
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -50,6 +64,7 @@ struct GlassButton: View {
     let title: String
     var systemImage: String?
     var expand = false
+    var width: CGFloat? = nil
     let action: () -> Void
 
     var body: some View {
@@ -61,12 +76,14 @@ struct GlassButton: View {
                     Text(title)
                 }
             }
-            .font(Typo.headline)
+            .font(ButtonMetrics.font)
             .lineLimit(1)
+            .minimumScaleFactor(0.85)
             .foregroundStyle(.primary)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, ButtonMetrics.horizontalPadding)
+            .frame(width: width)
             .frame(maxWidth: expand ? .infinity : nil)
-            .frame(height: 50)
+            .frame(height: ButtonMetrics.height)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

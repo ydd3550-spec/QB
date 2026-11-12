@@ -109,11 +109,22 @@ impl Store {
                 if !std::path::Path::new(path).exists() {
                     return Err(CoreError::storage(format!("{first} [{path}]")));
                 }
+                // اسم احتياطي ما هو مستخدم (لو فيه ملفات .broken قديمة من نفس الثانية)
                 let stamp = now();
+                let mut n = 0u32;
+                let base = loop {
+                    let b = if n == 0 { format!("{path}.broken-{stamp}") } else { format!("{path}.broken-{stamp}-{n}") };
+                    if !["", "-wal", "-shm"].iter().any(|s| std::path::Path::new(&format!("{b}{s}")).exists()) {
+                        break b;
+                    }
+                    n += 1;
+                };
                 for suffix in ["", "-wal", "-shm"] {
                     let p = format!("{path}{suffix}");
                     if std::path::Path::new(&p).exists() {
-                        let _ = std::fs::rename(&p, format!("{path}.broken-{stamp}{suffix}"));
+                        if std::fs::rename(&p, format!("{base}{suffix}")).is_err() {
+                            let _ = std::fs::remove_file(&p);
+                        }
                     }
                 }
                 Self::try_open(path).map_err(|second| CoreError::storage(format!("{first} | after reset: {second} [{path}]")))

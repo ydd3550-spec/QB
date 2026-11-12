@@ -334,12 +334,12 @@ struct PlayerHost: View {
                 Text(message).font(Typo.title).multilineTextAlignment(.center)
                 Text(L("جرّب مرة ثانية أو اختر مصدر ثاني")).font(Typo.info).foregroundStyle(.secondary)
                 HStack(spacing: 12) {
-                    GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise") { player.retry() }
+                    GlassButton(title: L("إعادة المحاولة"), systemImage: "arrow.clockwise", width: ButtonMetrics.pairWidth) { player.retry() }
                     if player.canTryAnother {
-                        PrimaryButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath") { player.tryAnotherSource() }
+                        PrimaryButton(title: L("جرّب مصدر ثاني"), systemImage: "arrow.triangle.2.circlepath", width: ButtonMetrics.pairWidth) { player.tryAnotherSource() }
                     }
                 }
-                GlassButton(title: L("المصادر"), systemImage: "rectangle.stack.fill") { sheet = .sources }
+                GlassButton(title: L("المصادر"), systemImage: "rectangle.stack.fill", width: ButtonMetrics.pairWidth) { sheet = .sources }
             }
             .foregroundStyle(.white)
             .padding(28)
