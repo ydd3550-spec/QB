@@ -128,17 +128,20 @@ struct HeroBanner: View {
                             .padding(.horizontal, 22)
                             .frame(height: 48)
                             .glassEffect(.regular.tint(Palette.accent), in: .capsule)
+                        let saved = app.libraryVersion >= 0 && app.isInLibrary(item.id)
                         Button {
-                            app.toggleLibrary(MediaRef(item))
+                            withAnimation(.smooth(duration: 0.25)) { _ = app.toggleLibrary(MediaRef(item)) }
                         } label: {
-                            Image(systemName: "plus")
+                            Image(systemName: saved ? "checkmark" : "plus")
                                 .font(.system(size: 18, weight: .semibold))
+                                .contentTransition(.symbolEffect(.replace.downUp))
                                 .frame(width: 48, height: 48)
                                 .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                         .glassEffect(.regular.interactive(), in: .circle)
-                        .accessibilityLabel(L("أضف لمكتبتي"))
+                        .sensoryFeedback(.selection, trigger: saved)
+                        .accessibilityLabel(saved ? L("شل من مكتبتي") : L("أضف لمكتبتي"))
                     }
                     .padding(.top, 4)
                 }

@@ -81,6 +81,8 @@ struct GlassButton: View {
             .font(ButtonMetrics.font)
             .lineLimit(1)
             .minimumScaleFactor(0.85)
+            .contentTransition(.opacity)
+            .animation(.smooth(duration: 0.22), value: title)
             .foregroundStyle(.primary)
             .padding(.horizontal, ButtonMetrics.horizontalPadding)
             .frame(width: width)
@@ -287,10 +289,45 @@ struct ToastView: View {
     var body: some View {
         Text(text)
             .font(Typo.infoMedium)
+            .lineLimit(1)
+            .fixedSize()
+            // النص يتبدّل بتلاشي، ما يتمطّط ولا يهتز
+            .contentTransition(.opacity)
             .padding(.horizontal, 18)
             .padding(.vertical, 12)
-            .glassEffect(.regular, in: .capsule)
+            .background(Capsule().fill(.regularMaterial))
+            .overlay(Capsule().strokeBorder(.white.opacity(0.08), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
             .padding(.top, 8)
+    }
+}
+
+/// مكان الرسالة العابرة: ثابت دايم، ويدخل ويطلع بتلاشي وحركة خفيفة لتحت/فوق بس.
+/// النص يبقى نفسه وقت الخروج (ما يختفي وسط الحركة)، ورسالة جديدة تتبدّل بتلاشي بدون قفزة بالمقاس.
+struct ToastHost: View {
+    let toast: String?
+    @State private var shown = ""
+    @State private var visible = false
+
+    var body: some View {
+        ToastView(text: shown)
+            .opacity(visible ? 1 : 0)
+            .offset(y: visible ? 0 : -14)
+            .animation(.smooth(duration: 0.28), value: shown)
+            .allowsHitTesting(false)
+            .accessibilityHidden(!visible)
+            .onChange(of: toast) { _, new in
+                if let new {
+                    if visible {
+                        withAnimation(.smooth(duration: 0.22)) { shown = new }
+                    } else {
+                        shown = new
+                        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { visible = true }
+                    }
+                } else {
+                    withAnimation(.smooth(duration: 0.3)) { visible = false }
+                }
+            }
     }
 }
 

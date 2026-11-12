@@ -3,7 +3,7 @@ import SwiftUI
 /// الحركة: أربع حركات بس في التطبيق كله
 enum Motion {
     /// العادية
-    static let standard = Animation.spring(duration: 0.35, bounce: 0.12)
+    static let standard = Animation.spring(duration: 0.35, bounce: 0.06)
     /// الأزرار والتشغيل/الإيقاف
     static let snappy = Animation.snappy(duration: 0.22)
     /// الشاشات المنبثقة والمشغّل

@@ -233,11 +233,12 @@ final class AppModel {
 
     func showToast(_ text: String) {
         toastTask?.cancel()
-        withAnimation(Motion.standard) { toast = text }
+        // الحركة كلها في ToastHost، هنا بس نغيّر القيمة
+        toast = text
         toastTask = Task {
             try? await Task.sleep(for: .seconds(2.2))
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.standard) { toast = nil }
+            toast = nil
         }
     }
 

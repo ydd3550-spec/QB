@@ -34,11 +34,7 @@ struct RootView: View {
                 .tint(Palette.accent)
         }
         .overlay(alignment: .top) {
-            if let toast = model.toast {
-                ToastView(text: toast)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .allowsHitTesting(false)
-            }
+            ToastHost(toast: model.toast)
         }
         .overlay {
             if let err = model.startupError {
