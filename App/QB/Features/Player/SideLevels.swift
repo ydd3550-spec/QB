@@ -260,7 +260,7 @@ struct HiddenVolumeView: UIViewRepresentable {
     let levels: SideLevels
 
     func makeUIView(context: Context) -> MPVolumeView {
-        let v = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let v = InvisibleVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         // لازم يكون داخل الشاشة وظاهر (ولو شوي) عشان النظام يقبل التغيير ويخفي مؤشّره
         v.alpha = 0.01
         v.isUserInteractionEnabled = false
@@ -270,5 +270,37 @@ struct HiddenVolumeView: UIViewRepresentable {
 
     func updateUIView(_ uiView: MPVolumeView, context: Context) {
         if levels.volumeView !== uiView { levels.volumeView = uiView }
+    }
+}
+
+/// MPVolumeView ما يرسم أي شي أبد.
+/// قبل نسخة 15 كان مقاسه نقطة وحدة بس، بس رأس الشريط (دائرة بيضا ~28 نقطة مع ظلها) يطلع برا حدوده
+/// لأنه ما كان مقصوص، وكان بنص الشاشة بالضبط. بشفافية 1% يختفي على أغلب الصور، بس على مشهد أسود
+/// (مثل جاكيت أسود) تبان دائرة فاتحة خفيفة بمكان زر التشغيل حتى والأزرار مخفية.
+/// الحين: رأس الشريط وخطوطه صور شفافة، وكل شي مقصوص على النقطة نفسها، ومكانه بالزاوية فوق.
+/// الشريط نفسه باقي موجود وشغّال (نغيّر فيه صوت الجهاز)، والنظر باقي ظاهر للنظام عشان يخفي مؤشّره
+final class InvisibleVolumeView: MPVolumeView {
+    private static let clear: UIImage = {
+        UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in }
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        clipsToBounds = true
+        isOpaque = false
+        backgroundColor = .clear
+        setVolumeThumbImage(Self.clear, for: .normal)
+        setVolumeThumbImage(Self.clear, for: .highlighted)
+        setMinimumVolumeSliderImage(Self.clear, for: .normal)
+        setMaximumVolumeSliderImage(Self.clear, for: .normal)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // النظام يقدر يرجّع هذي بعد تغيير الترتيب: نتأكد إنه مقصوص دايم
+        if !clipsToBounds { clipsToBounds = true }
+        for sub in subviews where !sub.clipsToBounds { sub.clipsToBounds = true }
     }
 }

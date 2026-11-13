@@ -87,9 +87,13 @@ struct PlayerHost: View {
                     .ignoresSafeArea()
                     .opacity(player.surface == nil ? 0 : 1)
 
+                // نقطة وحدة مقصوصة وما ترسم شي، بالزاوية فوق (مو بنص الشاشة حيث زر التشغيل)
                 HiddenVolumeView(levels: levels)
                     .frame(width: 1, height: 1)
+                    .clipped()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
 
                 gestureLayer(size: geo.size, screen: screen)
 
