@@ -131,7 +131,7 @@ struct QBWidgetBundle: WidgetBundle {
 }
 
 
-/// شعار QB الجديد (زر التشغيل على خلفية سودا) بزوايا مدوّرة مثل أيقونة التطبيق
+/// شعار QB الجديد (زر تشغيل بلون التطبيق على خلفية سودا) بزوايا مدوّرة مثل أيقونة التطبيق
 struct WidgetLogoMark: View {
     let size: CGFloat
     var body: some View {
