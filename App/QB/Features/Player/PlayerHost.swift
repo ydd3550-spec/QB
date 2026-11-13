@@ -112,24 +112,26 @@ struct PlayerHost: View {
                         .transition(.opacity)
                 }
 
-                resumeHint
+                // كل قطعة كبيرة تنبني لحالها (StackSplit): لو تنبني الشاشة كلها بنفس الخطوة تخلص ذاكرة
+                // الخيط الرئيسي (1 ميغا) والتطبيق يطلع أول ما ينفتح المشغّل. هذا سبب الطلعة في نسخة 12
+                StackSplit { resumeHint }
                     .animation(Motion.pop, value: player.resumedFrom != nil && player.elapsed > 0)
 
-                zoomHint
+                StackSplit { zoomHint }
 
-                loadingOrError
+                StackSplit { loadingOrError }
 
                 SideLevelPill(levels: levels)
                     .ignoresSafeArea()
 
                 if controlsVisible {
-                    controls
+                    StackSplit { controls }
                         // الأزرار تختفي بنعومة مع السحب لتحت بدل ما تبقى فوق الصورة
                         .opacity(dismiss.controlsOpacity)
                         .transition(.opacity)
                 }
 
-                nextUpCard
+                StackSplit { nextUpCard }
                     .opacity(dismiss.controlsOpacity)
             }
             .environment(\.layoutDirection, layoutDirection)
@@ -459,15 +461,15 @@ struct PlayerHost: View {
             .allowsHitTesting(false)
 
             VStack(spacing: 0) {
-                topBar
+                StackSplit { topBar }
                 Spacer()
-                bottomBar
+                StackSplit { bottomBar }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
             // أزرار الوسط بنص الفيديو بالضبط (الفيديو نفسه يغطي الشاشة كلها)، مو بين الشريطين
-            transport
+            StackSplit { transport }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
         }
@@ -623,9 +625,9 @@ struct PlayerHost: View {
             // الأزرار تحت كلها تبان كاملة دايم: صف واحد عادي، ولو ما وسع صف أصغر شوي، ولو ما وسع صفّين.
             // ما فيه تمرير ولا زر مقصوص على الطرف
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { chipSet(compact: false) }
-                HStack(spacing: 6) { chipSet(compact: true) }
-                VStack(spacing: 8) {
+                StackSplit { HStack(spacing: 10) { chipSet(compact: false) } }
+                StackSplit { HStack(spacing: 6) { chipSet(compact: true) } }
+                StackSplit { VStack(spacing: 8) {
                     HStack(spacing: 8) {
                         tracksChip(compact: false)
                         sourcesChip(compact: false)
@@ -635,8 +637,8 @@ struct PlayerHost: View {
                         similarChip(compact: false)
                         engineMenu(compact: false)
                     }
-                }
-                VStack(spacing: 6) {
+                } }
+                StackSplit { VStack(spacing: 6) {
                     HStack(spacing: 6) {
                         tracksChip(compact: true)
                         sourcesChip(compact: true)
@@ -646,7 +648,7 @@ struct PlayerHost: View {
                         similarChip(compact: true)
                         engineMenu(compact: true)
                     }
-                }
+                } }
             }
             .frame(maxWidth: .infinity)
         }
@@ -1058,6 +1060,15 @@ private struct Chevrons: View {
             }
         }
     }
+}
+
+/// يبني محتواه كعقدة SwiftUI مستقلة بخطوة لحالها، بدل ما ينبني داخل نفس استدعاء body الكبير.
+/// أنواع SwiftUI مقاسها ما ينعرف إلا وقت التشغيل، فكل طبقة من الشاشة تنحجز على مكدّس الخيط الرئيسي (1 ميغا)
+/// داخل استدعاء واحد. شاشة المشغّل كبرت لين خلّصت المكدّس وطلع التطبيق (EXC_BAD_ACCESS بمنطقة حماية المكدّس).
+/// هنا كل قطعة تنحسب لما يطلبها SwiftUI بعد ما يرجع body الأب، فالمكدّس ما يتراكم.
+struct StackSplit<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View { content() }
 }
 
 /// زر AirPlay
