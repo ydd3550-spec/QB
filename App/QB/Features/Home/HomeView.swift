@@ -4,11 +4,13 @@ import QBCore
 /// الرئيسية: بانر بارز، كمّل المشاهدة، ورفوف الكتالوجات من كل الإضافات
 struct HomeView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
     @Namespace private var zoom
-    @State private var rows: [CatalogRow] = []
-    @State private var loading = true
+    // من الجلسة لو انبنت الرئيسية من جديد (رجوع من البحث وغيره): نفس الرفوف بدون تحميل ولا حركة
+    @State private var rows: [CatalogRow] = HeroCache.sessionRows
+    @State private var loading = HeroCache.sessionRows.isEmpty
     @State private var error: String?
-    @State private var loadedVersion = -1
+    @State private var loadedVersion = HeroCache.sessionVersion
 
     var body: some View {
         NavigationStack(path: app.binding(for: .home)) {
@@ -18,14 +20,17 @@ struct HomeView: View {
                         // البانر يبدأ من أعلى الشاشة بالضبط (المسافة بين الرفوف ما تنحط فوقه)
                         VStack(spacing: 0) {
                             Color.clear.frame(height: 0).id("top")
-                            if let hero = heroItem {
-                                // الصورة تتمطّط لفوق بنفسها وقت الرسم (سحب لتحت أو وقت التحديث)، بدون متغيّرات تعيد رسم الصفحة
-                                HeroBanner(item: hero, namespace: zoom)
-                                    .id(hero.id)
-                                    .transition(.opacity)
-                            } else if loading || !app.ready {
-                                HeroPlaceholder()
-                                    .transition(.opacity)
+                            // فوق بعض (مو تحت بعض): لما يتغير البانر القديم والجديد يتلاشون بنفس المكان بدون ما تنط الصفحة
+                            ZStack(alignment: .top) {
+                                if let hero = heroItem {
+                                    // الصورة تتمطّط لفوق بنفسها وقت الرسم (سحب لتحت أو وقت التحديث)، بدون متغيّرات تعيد رسم الصفحة
+                                    HeroBanner(item: hero, namespace: zoom)
+                                        .id(hero.id)
+                                        .transition(.opacity)
+                                } else if loading || !app.ready {
+                                    HeroPlaceholder()
+                                        .transition(.opacity)
+                                }
                             }
                         }
 
@@ -61,7 +66,6 @@ struct HomeView: View {
                 } action: { _, past in
                     withAnimation(.smooth(duration: 0.25)) { scrolledPastHero = past }
                 }
-                .animation(.smooth(duration: 0.45), value: heroItem?.id)
                 .scrollIndicators(.hidden)
                 .onChange(of: app.scrollToTop[.home]) { _, _ in
                     withAnimation(Motion.soft) { proxy.scrollTo("top", anchor: .top) }
@@ -80,21 +84,65 @@ struct HomeView: View {
             .toolbarBackgroundVisibility(scrolledPastHero ? .visible : .hidden, for: .navigationBar)
             .mediaDestinations(zoom)
             .task(id: app.addonsVersion) { await load(force: false) }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background:
+                    HeroCache.backgroundedAt = Date()
+                case .active:
+                    // رجعت للتطبيق بعد فترة: عمل جديد بالبانر (بصورته جاهزة وتلاشي ناعم)
+                    let since = HeroCache.backgroundedAt
+                    HeroCache.backgroundedAt = nil
+                    if let since, Date().timeIntervalSince(since) >= HeroCache.rotateAfter, !rows.isEmpty {
+                        Task { await rotateHero(animated: true) }
+                    }
+                default:
+                    break
+                }
+            }
         }
     }
 
     @State private var scrolledPastHero = false
 
-    /// آخر بانر محفوظ: يطلع أول ما يفتح التطبيق لين توصل الرفوف
-    @State private var cachedHero: MetaPreview? = HeroCache.latest ?? HeroCache.atLaunch
+    /// البانر المعروض: نفس اللي بالجلسة لو انبنت الرئيسية من جديد (رجوع من البحث أو التفاصيل)،
+    /// وأول الفتحة المختار لها (صورته جاهزة من القرص). ما يتغير إلا بفتحة جديدة أو سحب للتحديث أو رجوع بعد فترة
+    @State private var heroItem: MetaPreview? = HeroCache.current ?? HeroCache.atLaunch
+    @State private var rotating = false
 
-    /// أول عمل له خلفية عريضة من أول رف (أو المحفوظ لين توصل)
-    private var heroItem: MetaPreview? {
-        freshHero ?? cachedHero
+    /// يختار عمل جديد عشوائي من الرائج (مو نفس المعروض ولا آخر واحد انعرض)، يجهّز صورته بالذاكرة،
+    /// وبعدين يبدّل بتلاشي ناعم. لو الصورة ما تحمّلت يبقى المعروض مثل ما هو
+    private func rotateHero(animated: Bool) async {
+        guard !rotating else { return }
+        let pool = HeroCache.pool(rows)
+        var avoid = Set<String>()
+        if let id = heroItem?.id { avoid.insert(id) }
+        if let id = HeroCache.lastShownID { avoid.insert(id) }
+        guard let pick = HeroCache.pick(from: pool, avoiding: avoid) else { return }
+        if pick.id == heroItem?.id { settle(pick); return }
+        rotating = true
+        defer { rotating = false }
+        let ready = await HeroCache.preload(pick)
+        guard !Task.isCancelled else { return }
+        if !ready, heroItem != nil { return }
+        HeroCache.pin(pick)
+        if animated {
+            withAnimation(.easeInOut(duration: 0.6)) { heroItem = pick }
+        } else {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { heroItem = pick }
+        }
+        settle(pick)
     }
 
-    private var freshHero: MetaPreview? {
-        rows.first?.items.first(where: { $0.background != nil }) ?? rows.first?.items.first
+    /// يثبّت البانر لهالجلسة، يحفظه كآخر واحد انعرض، ويجهّز اللي بيطلع بالفتحة الجاية
+    private func settle(_ hero: MetaPreview) {
+        HeroCache.current = hero
+        HeroCache.pin(hero)
+        HeroCache.save(hero)
+        if let next = HeroCache.pick(from: HeroCache.pool(rows), avoiding: [hero.id]), next.id != hero.id {
+            HeroCache.saveNext(next)
+        }
     }
 
     private func load(force: Bool) async {
@@ -107,13 +155,22 @@ struct HomeView: View {
             // السحب للتحديث يجيب من الشبكة نفسها (مو من المحفوظ اللي يبقى 30 دقيقة)
             let result = try await (force ? core.homeRowsFresh() : core.homeRows())
             let fresh = result.filter { !$0.items.isEmpty }
-            // نحفظ البانر وصورته للمرة الجاية (بالخلفية، ما نأخر الرفوف)
-            if let first = fresh.first, let hero = first.items.first(where: { $0.background != nil }) ?? first.items.first {
-                HeroCache.save(hero)
-                HeroCache.latest = hero
-            }
             withAnimation(Motion.standard) { rows = fresh }
             loadedVersion = app.addonsVersion
+            HeroCache.sessionRows = fresh
+            HeroCache.sessionVersion = app.addonsVersion
+            if force {
+                // السحب للتحديث: عمل جديد بالبانر
+                await rotateHero(animated: true)
+            } else if HeroCache.current == nil {
+                // أول تحميل بالجلسة: لو المعروض جديد (مختار مسبقًا وصورته من القرص) يبقى بدون أي تبديل،
+                // وإلا (أول مرة أو ما كان فيه مختار جاهز) نختار واحد جديد
+                if let hero = heroItem, HeroCache.launchIsFresh {
+                    settle(hero)
+                } else {
+                    await rotateHero(animated: true)
+                }
+            }
         } catch is CancellationError {
             return
         } catch {

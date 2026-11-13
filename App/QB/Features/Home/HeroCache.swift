@@ -2,16 +2,32 @@ import SwiftUI
 import UIKit
 import QBCore
 
-/// آخر عمل بالبانر وصورته محفوظين على الجهاز: يطلعون أول ما يفتح التطبيق، قبل ما توصل الرفوف
+/// بانر الرئيسية: العمل المعروض وصورته محفوظين على الجهاز، والعمل اللي بيطلع بالفتحة الجاية (مختار مسبقًا
+/// وصورته جاهزة على القرص)، فكل فتحة للتطبيق تطلع بعمل جديد من أول إطار بدون تبديل قدامك
 nonisolated enum HeroCache {
     static let pixel: CGFloat = 1400
 
     /// يُقرأ من القرص مرة وحدة بس عند فتح التطبيق
-    static let atLaunch: MetaPreview? = loadAndWarm()
+    private static let launch: (item: MetaPreview?, lastID: String?, fresh: Bool) = loadAndWarm()
 
-    /// آخر بانر عرضته الرئيسية في هذي الجلسة (بالذاكرة): لو انبنت الرئيسية من جديد ترجع بنفس البانر
-    /// ونفس الصورة من أول إطار، بدل البانر القديم المحفوظ من فتحة التطبيق
-    @MainActor static var latest: MetaPreview?
+    /// اللي ينعرض أول ما يفتح التطبيق: المختار للفتحة هذي لو موجود، وإلا آخر واحد انعرض
+    static var atLaunch: MetaPreview? { launch.item }
+    /// آخر عمل انعرض بالجلسة اللي قبل (عشان ما يتكرر)
+    static var lastShownID: String? { launch.lastID }
+    /// اللي انعرض أول الفتحة جديد (مختار مسبقًا ومو نفس آخر واحد)
+    static var launchIsFresh: Bool { launch.fresh }
+
+    /// رفوف الرئيسية بهالجلسة: لو انبنت الرئيسية من جديد ترجع بنفس الرفوف فورًا بدون تحميل ولا ظهور من جديد
+    @MainActor static var sessionRows: [CatalogRow] = []
+    @MainActor static var sessionVersion = -1
+
+    /// البانر المعروض بهالجلسة (بالذاكرة): لو انبنت الرئيسية من جديد (رجوع من البحث وغيره) ترجع بنفسه
+    /// ونفس الصورة من أول إطار. ما يتغير إلا مع فتحة جديدة أو السحب للتحديث أو رجوع للتطبيق بعد فترة
+    @MainActor static var current: MetaPreview?
+    /// متى راح التطبيق للخلفية
+    @MainActor static var backgroundedAt: Date?
+    /// كم لازم يقعد بالخلفية عشان يتغير البانر لما ترجع
+    static let rotateAfter: TimeInterval = 10 * 60
 
     private struct Stored: Codable {
         var id, kind, name: String
@@ -25,40 +41,126 @@ nonisolated enum HeroCache {
     }
     private static var jsonURL: URL? { dir?.appendingPathComponent("qb-hero.json") }
     private static var imageURL: URL? { dir?.appendingPathComponent("qb-hero.jpg") }
+    private static var nextJSONURL: URL? { dir?.appendingPathComponent("qb-hero-next.json") }
+    private static var nextImageURL: URL? { dir?.appendingPathComponent("qb-hero-next.jpg") }
 
-    /// يقرأ البانر المحفوظ ويحط صورته بكاش الذاكرة عشان تطلع بدون انتظار
-    static func loadAndWarm() -> MetaPreview? {
-        guard let jsonURL, let data = try? Data(contentsOf: jsonURL),
+    private static func read(_ json: URL?) -> MetaPreview? {
+        guard let json, let data = try? Data(contentsOf: json),
               let s = try? JSONDecoder().decode(Stored.self, from: data),
               let kind = MediaKind(wire: s.kind) else { return nil }
-        let item = MetaPreview(id: s.id, kind: kind, name: s.name, poster: s.poster, background: s.background, logo: s.logo,
-                               description: s.description, releaseInfo: s.releaseInfo, imdbRating: s.imdbRating,
-                               genres: s.genres, addon: s.addon)
-        if let raw = item.background ?? item.poster, let url = URL(string: raw),
-           ImagePipeline.shared.cached(url, maxPixel: pixel) == nil,
-           let imageURL, let jpg = try? Data(contentsOf: imageURL), let image = UIImage(data: jpg) {
-            ImagePipeline.shared.store(image, for: url, maxPixel: pixel)
-        }
-        return item
+        return MetaPreview(id: s.id, kind: kind, name: s.name, poster: s.poster, background: s.background, logo: s.logo,
+                           description: s.description, releaseInfo: s.releaseInfo, imdbRating: s.imdbRating,
+                           genres: s.genres, addon: s.addon)
     }
 
-    /// يحفظ البانر الجديد وصورته (بالخلفية) للمرة الجاية
+    /// يحط صورة القرص بكاش الذاكرة (ويثبّتها) عشان تطلع بدون انتظار
+    private static func warm(_ item: MetaPreview, from file: URL?) -> Bool {
+        guard let raw = item.background ?? item.poster, let url = URL(string: raw) else { return false }
+        if ImagePipeline.shared.cached(url, maxPixel: pixel) == nil {
+            guard let file, let jpg = try? Data(contentsOf: file), let image = UIImage(data: jpg) else { return false }
+            ImagePipeline.shared.store(image, for: url, maxPixel: pixel)
+        }
+        ImagePipeline.shared.pin(pinEntries(item))
+        return true
+    }
+
+    /// يقرأ البانر ويحط صورته بالذاكرة. المختار للفتحة هذي يتقدّم لو صورته جاهزة ومو نفس آخر واحد انعرض
+    private static func loadAndWarm() -> (item: MetaPreview?, lastID: String?, fresh: Bool) {
+        let last = read(jsonURL)
+        if let next = read(nextJSONURL), next.id != last?.id, warm(next, from: nextImageURL) {
+            return (next, last?.id, true)
+        }
+        if let last { _ = warm(last, from: imageURL) }
+        return (last, last?.id, false)
+    }
+
+    private static func stored(_ m: MetaPreview) -> Stored {
+        Stored(id: m.id, kind: m.kind.wire, name: m.name, poster: m.poster, background: m.background, logo: m.logo,
+               description: m.description, releaseInfo: m.releaseInfo, imdbRating: m.imdbRating,
+               genres: m.genres, addon: m.addon)
+    }
+
+    /// الصور اللي تنثبّت للعمل: الخلفية الكاملة والصغيرة والشعار
+    static func pinEntries(_ m: MetaPreview) -> [(URL, CGFloat)] {
+        var out: [(URL, CGFloat)] = []
+        if let raw = m.background ?? m.poster, let u = URL(string: raw) {
+            out.append((u, pixel))
+            if let p = previewURL(for: raw), let pu = URL(string: p) { out.append((pu, 700)) }
+        }
+        if let logo = m.logo, let u = URL(string: logo) { out.append((u, 700)) }
+        return out
+    }
+
+    /// يحمّل صورة العمل (والشعار) بالذاكرة قبل ما ينعرض. يرجع true لو الخلفية جاهزة
+    static func preload(_ m: MetaPreview) async -> Bool {
+        guard let raw = m.background ?? m.poster, let url = URL(string: raw) else { return false }
+        async let logo = loadLogo(m.logo)
+        let big = await ImagePipeline.shared.image(for: url, maxPixel: pixel)
+        _ = await logo
+        return big != nil
+    }
+
+    private static func loadLogo(_ raw: String?) async -> UIImage? {
+        guard let raw, let u = URL(string: raw) else { return nil }
+        return await ImagePipeline.shared.image(for: u, maxPixel: 700)
+    }
+
+    /// يثبّت صور البانر المعروض بالذاكرة (ما تنمسح لين يتغير البانر)
+    static func pin(_ m: MetaPreview) {
+        ImagePipeline.shared.pin(pinEntries(m))
+    }
+
+    /// يحفظ البانر المعروض وصورته (بالخلفية): يصير "آخر واحد انعرض" وصورته للمرة الجاية
     static func save(_ m: MetaPreview) {
-        let s = Stored(id: m.id, kind: m.kind.wire, name: m.name, poster: m.poster, background: m.background, logo: m.logo,
-                       description: m.description, releaseInfo: m.releaseInfo, imdbRating: m.imdbRating,
-                       genres: m.genres, addon: m.addon)
+        write(m, json: jsonURL, image: imageURL)
+    }
+
+    /// يحفظ اللي بيطلع بالفتحة الجاية وصورته على القرص، عشان يطلع من أول إطار
+    static func saveNext(_ m: MetaPreview) {
+        write(m, json: nextJSONURL, image: nextImageURL)
+    }
+
+    private static func write(_ m: MetaPreview, json: URL?, image file: URL?) {
+        let s = stored(m)
         let raw = m.background ?? m.poster
+        let logoRaw = m.logo
         Task.detached(priority: .utility) {
-            guard let jsonURL, let imageURL else { return }
+            guard let json, let file else { return }
             if let raw, let url = URL(string: raw),
                let image = await ImagePipeline.shared.image(for: url, maxPixel: pixel),
                let jpg = image.jpegData(compressionQuality: 0.85) {
-                try? jpg.write(to: imageURL, options: .atomic)
+                try? jpg.write(to: file, options: .atomic)
+            } else {
+                // بدون صورة ما نحفظه (عشان ما يطلع البانر فاضي أول الفتحة)
+                return
             }
             if let data = try? JSONEncoder().encode(s) {
-                try? data.write(to: jsonURL, options: .atomic)
+                try? data.write(to: json, options: .atomic)
+            }
+            // الشعار بكاش القرص بعد
+            _ = await loadLogo(logoRaw)
+        }
+    }
+
+    /// الأعمال اللي ينختار منها البانر: الرائج (أول رف) اللي له خلفية عريضة، ولو قليلة نزيد من الرفوف اللي بعده
+    static func pool(_ rows: [CatalogRow]) -> [MetaPreview] {
+        var out: [MetaPreview] = []
+        var seen = Set<String>()
+        for (i, row) in rows.prefix(3).enumerated() {
+            if i > 0, out.count >= 6 { break }
+            for item in row.items.prefix(i == 0 ? 20 : 10) where item.background != nil && !seen.contains(item.id) {
+                seen.insert(item.id)
+                out.append(item)
             }
         }
+        if out.isEmpty, let first = rows.first?.items.first { out = [first] }
+        return out
+    }
+
+    /// اختيار عشوائي ما يكرر اللي انعرض
+    static func pick(from pool: [MetaPreview], avoiding ids: Set<String>) -> MetaPreview? {
+        let candidates = pool.filter { !ids.contains($0.id) }
+        return candidates.randomElement() ?? pool.randomElement()
     }
 
     /// نسخة أصغر من نفس الصورة تنزل أسرع (لو الموقع يوفّرها)
@@ -77,6 +179,8 @@ struct HeroImage: View {
 
     @State private var image: UIImage?
     @State private var sharp = false
+    /// رابط الصورة الكاملة المعروضة الحين
+    @State private var shownURL: String?
 
     /// الصورة من الذاكرة من أول إطار: لو ننتظر .task (يشتغل بعد أول رسم) يطلع إطار وحده فيه اللمعة الفاتحة،
     /// وهذي هي الومضة البيضا لما ترجع للرئيسية من البحث
@@ -86,6 +190,7 @@ struct HeroImage: View {
            let hit = ImagePipeline.shared.cached(full, maxPixel: HeroCache.pixel) {
             _image = State(initialValue: hit)
             _sharp = State(initialValue: true)
+            _shownURL = State(initialValue: url)
         } else if let url, let p = HeroCache.previewURL(for: url), let pu = URL(string: p),
                   let small = ImagePipeline.shared.cached(pu, maxPixel: 700) {
             _image = State(initialValue: small)
@@ -112,6 +217,8 @@ struct HeroImage: View {
 
     private func load() async {
         guard let url, let full = URL(string: url) else { return }
+        // رجعت الرئيسية تبان والصورة الكاملة نفسها معروضة: ما نلمسها أبد (حتى لو انمسحت من الكاش)
+        if image != nil, sharp, shownURL == url { return }
         if let hit = ImagePipeline.shared.cached(full, maxPixel: HeroCache.pixel) {
             // نفس الصورة معروضة: ما نلمسها (لا تلاشي ولا إعادة رسم)
             if image !== hit {
@@ -122,6 +229,7 @@ struct HeroImage: View {
                     sharp = true
                 }
             }
+            shownURL = url
             return
         }
         // الصغيرة والكاملة بنفس الوقت
@@ -137,6 +245,7 @@ struct HeroImage: View {
                 image = loaded
                 sharp = true
             }
+            shownURL = url
         }
     }
 }

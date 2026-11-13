@@ -85,7 +85,6 @@
   "تثبيت إضافة": "Install add-on",
   "تخطّي المقدمة": "Skip intro",
   "ترجمات": "Subtitles",
-  "تشتغل كل إضافات Stremio. الروابط اللي تبدأ بـ stremio:// تشتغل بعد": "Any Stremio add-on works. Links starting with stremio:// work too",
   "تشغيل": "Play",
   "تشغيل خلال %@": "Playing in %@",
   "تصدير المكتبة": "Export library",
@@ -195,5 +194,7 @@
   "يحدّث": "Refreshing",
   "مكبّر لملء الشاشة": "Zoomed to fill",
   "إعادة تحميل": "Reload",
-  "الرابط انتهى": "The link expired"
+  "الرابط انتهى": "The link expired",
+  "هذا مو رابط إضافة Stremio. لازم يكون رابط إضافة ينتهي بـ %@ أو يبدأ بـ %@": "This isn't a Stremio add-on link. It has to be an add-on link that ends with %@ or starts with %@",
+  "ما قدرنا نوصل للرابط. تأكد إنه رابط إضافة Stremio ينتهي بـ %@ أو يبدأ بـ %@ وإن النت شغّال": "We couldn't reach that link. Make sure it's a Stremio add-on link that ends with %@ or starts with %@, and that you're online"
 }

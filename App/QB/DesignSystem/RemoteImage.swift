@@ -8,6 +8,10 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
     static let shared = ImagePipeline()
 
     private let memory = NSCache<NSString, UIImage>()
+    /// صور مثبّتة بالذاكرة (صورة بانر الرئيسية وشعاره): ما تنمسح مع زحمة الكاش (البحث يحمّل صور كثير)
+    /// ولا مع ضغط الذاكرة، فلما ترجع للرئيسية تطلع الصورة نفسها من أول إطار
+    private let pinLock = NSLock()
+    private var pinned: [NSString: UIImage] = [:]
     private let session: URLSession
 
     private init() {
@@ -26,7 +30,27 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
     }
 
     func cached(_ url: URL, maxPixel: CGFloat) -> UIImage? {
-        memory.object(forKey: key(url, maxPixel))
+        let k = key(url, maxPixel)
+        pinLock.lock()
+        let p = pinned[k]
+        pinLock.unlock()
+        if let p { return p }
+        return memory.object(forKey: k)
+    }
+
+    /// يثبّت هالصور (اللي بالكاش الحين) بدل المثبّت قبلها
+    func pin(_ entries: [(URL, CGFloat)]) {
+        var next: [NSString: UIImage] = [:]
+        pinLock.lock()
+        let old = pinned
+        pinLock.unlock()
+        for (url, px) in entries {
+            let k = key(url, px)
+            if let img = old[k] ?? memory.object(forKey: k) { next[k] = img }
+        }
+        pinLock.lock()
+        pinned = next
+        pinLock.unlock()
     }
 
     func image(for url: URL, maxPixel: CGFloat) async -> UIImage? {
@@ -87,6 +111,20 @@ struct RemoteImage: View {
     @State private var failed = false
     /// رابط الصورة المعروضة الحين
     @State private var loadedURL: String?
+
+    init(url: String?, maxPixel: CGFloat = 420, contentMode: ContentMode = .fill,
+         placeholderSymbol: String? = "film", placeholderText: String? = nil) {
+        self.url = url
+        self.maxPixel = maxPixel
+        self.contentMode = contentMode
+        self.placeholderSymbol = placeholderSymbol
+        self.placeholderText = placeholderText
+        // لو الصورة بالذاكرة تطلع من أول إطار (بدون إطار فاضي ثم ظهور، مثل شعار البانر لما ترجع للرئيسية)
+        if let url, let u = URL(string: url), let hit = ImagePipeline.shared.cached(u, maxPixel: maxPixel) {
+            _image = State(initialValue: hit)
+            _loadedURL = State(initialValue: url)
+        }
+    }
 
     var body: some View {
         ZStack {

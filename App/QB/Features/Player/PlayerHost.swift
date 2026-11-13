@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import UIKit
 import QBCore
 
 /// المشغّل بملء الشاشة: الفيديو، الترجمة، الإيماءات، وأدوات التحكم الزجاجية
@@ -25,6 +26,14 @@ struct PlayerHost: View {
     @State private var seekPreview: Double?
     @State private var seekStart: Double = 0
     @State private var dragAxis: Axis?
+    /// رجوع البطاقة بعد سحب ما كمّل: حركة وحدة ناعمة تنحسب كل إطار من نفس الإزاحة
+    /// (الزوايا والقص والتصغير والظل وتعتيم الصفحة اللي ورا كلها تمشي معها بنفس اللحظة)
+    @State private var cardReturn = CardReturnDriver()
+    /// لو مسكت البطاقة وهي راجعة: تكمّل من مكانها بدل ما تنط
+    @State private var grabY: CGFloat = 0
+    @State private var grabX: CGFloat = 0
+    /// كم سحب الإصبع قبل ما يبدأ السحب فعلًا (حد البداية)، عشان البطاقة ما تنط هالمسافة أول ما تتحرك
+    @State private var dragSlop: CGSize = .zero
     /// يرجع false لحاله لو انلغى السحب (النظام أو زر ثاني أخذ اللمسة)، فما يعلق شي على الشاشة
     @GestureState private var dragging = false
     /// السحب العمودي الحالي: صوت، إضاءة، أو خروج
@@ -143,12 +152,15 @@ struct PlayerHost: View {
             }
             // ظل ناعم تحت البطاقة وقت السحب بس (شكل ثابت، ما يكلّف شي على الفيديو)
             .background {
-                if dragOffset > 0 {
+                if dragOffset > 0 || leaving {
                     RoundedRectangle(cornerRadius: dismiss.cornerRadius, style: .continuous)
                         .fill(.black)
-                        .shadow(color: .black.opacity(0.45 * dismiss.controlsOpacityInverse), radius: 28, y: 12)
+                        .shadow(color: .black.opacity(0.45), radius: 28, y: 12)
+                        // يطلع ويختفي بالتدريج مع الإزاحة نفسها (ما ينشال فجأة وقت الرجوع)
+                        .opacity(dismiss.controlsOpacityInverse)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
+                        .transition(.identity)
                 }
             }
             .visualEffect { content, _ in
@@ -179,6 +191,7 @@ struct PlayerHost: View {
             levels.startObserving()
         }
         .onDisappear {
+            cardReturn.stop()
             levels.playerClosed()
             player.dismissProgress = 0
         }
@@ -212,8 +225,11 @@ struct PlayerHost: View {
                 if !pinching { dragVoided = false }
                 if seekPreview != nil { seekPreview = nil }
                 if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-                if dragOffset != 0 || dragX != 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
-                if !leaving { OrientationLock.releaseHold() }
+                // انلغى بدون onEnded والبطاقة نازلة: ترجع بنفس الحركة الناعمة. لو هي أصلًا راجعة نخليها تكمّل
+                // (والدوران يرجع مسموح بس بعد ما توصل مكانها)
+                if !leaving, !cardReturn.isRunning {
+                    if dragOffset != 0 || dragX != 0 { returnCard(velocity: 0) } else { OrientationLock.releaseHold() }
+                }
                 dragAxis = nil
             }
         }
@@ -271,12 +287,21 @@ struct PlayerHost: View {
                         if dragAxis == nil {
                             dragAxis = abs(v.translation.width) > abs(v.translation.height) ? .horizontal : .vertical
                             seekStart = player.elapsed
+                            dragSlop = v.translation
+                            grabY = 0
+                            grabX = 0
                             if dragAxis == .vertical {
                                 verticalKind = PlayerLogic.verticalDrag(startX: v.startLocation.x, startY: v.startLocation.y, size: size)
                                 switch verticalKind {
                                 case .volume: levels.begin(.volume)
                                 case .brightness: levels.begin(.brightness)
                                 case .dismiss:
+                                    // مسكتها وهي راجعة: نوقف الرجوع وتكمّل من نفس مكانها تحت إصبعك
+                                    if cardReturn.isRunning {
+                                        cardReturn.stop()
+                                        grabY = dragOffset
+                                        grabX = dragX
+                                    }
                                     // وقت السحب لتحت الشاشة ما تلف (لو مال الجوال)، عشان البطاقة ما تطلع بالعرض فوق صفحة بالطول
                                     OrientationLock.holdCurrent()
                                 }
@@ -288,11 +313,13 @@ struct PlayerHost: View {
                             seekPreview = SeekMath.target(start: seekStart, dx: v.translation.width, width: size.width, duration: player.duration)
                         case .vertical:
                             if verticalKind == .dismiss {
-                                let down = max(0, v.translation.height)
+                                // من لحظة ما يبدأ السحب (مو من أول لمسة)، فالبطاقة تبدأ من مكانها بدون نطّة
+                                let down = max(0, grabY + v.translation.height - max(0, dragSlop.height))
                                 dragOffset = down
                                 // يمين ويسار: يلحق الإصبع، أخف شوي من فوق وتحت. ما يبدأ إلا مع النزول لتحت
                                 // (يدخل بالتدريج أول 24 نقطة عشان ما ينط)، وسحب لفوق أو على الجنب بس يبقى صفر
-                                dragX = down > 0 ? v.translation.width * 0.85 * min(down / 24, 1) : 0
+                                let side = (v.translation.width - dragSlop.width) * 0.85 * min(down / 24, 1)
+                                dragX = down > 0 ? grabX * min(down / max(grabY, 1), 1) + side : 0
                             } else {
                                 levels.change(dy: v.translation.height, height: size.height)
                             }
@@ -320,6 +347,7 @@ struct PlayerHost: View {
                         if dragAxis == .vertical {
                             if PlayerLogic.swipeDismisses(translation: v.translation.height, predicted: v.predictedEndTranslation.height) {
                                 // نكمّل الحركة لتحت بنفس سرعة إصبعك لين تطلع من الشاشة، وبعدين نشيلها بدون حركة ثانية
+                                cardReturn.stop()
                                 leaving = true
                                 let remaining = max(1, DismissCard.offscreen(size) - dragOffset)
                                 let velocity = max(0, (v.predictedEndTranslation.height - v.translation.height) * 4)
@@ -336,9 +364,8 @@ struct PlayerHost: View {
                                     player.minimize(animated: false)
                                 }
                             } else {
-                                // يرجع بنطّة خفيفة، ولو لمستها وهي راجعة تمسكها من مكانها
-                                withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 }
-                                OrientationLock.releaseHold()
+                                // يرجع بحركة وحدة ناعمة بنفس سرعة إصبعك، بدون نطّة ولا تعدّي لفوق
+                                returnCard(velocity: v.velocity.height)
                             }
                         }
                     }
@@ -373,14 +400,33 @@ struct PlayerHost: View {
         dragVoided = true
         if seekPreview != nil { seekPreview = nil }
         if verticalKind != .dismiss { levels.end(); verticalKind = .dismiss }
-        if dragOffset != 0 || dragX != 0, !leaving { withAnimation(DismissCard.springBack) { dragOffset = 0; dragX = 0 } }
+        if dragOffset != 0 || dragX != 0, !leaving, !cardReturn.isRunning { returnCard(velocity: 0) }
         dragAxis = nil
+    }
+
+    /// البطاقة ترجع مكانها بعد سحب ما كمّل. نحسب الإزاحة بأنفسنا كل إطار (120Hz) بسبرنق مخمّد بالضبط:
+    /// بدون نطّة وبدون ما تعدّي فوق مكانها، ويبدأ بنفس سرعة إصبعك. كل شي مربوط بالإزاحة (القص على الزوايا
+    /// بطبقة الفيديو، الزوايا، التصغير، الظل، الأزرار، الصفحة اللي ورا) يتحدّث بنفس الإطار مثل وقت السحب بالضبط،
+    /// فما فيه حركة SwiftUI وحركة UIKit تتسابق. والدوران ما يرجع مسموح إلا بعد ما توصل مكانها
+    private func returnCard(velocity: CGFloat) {
+        guard !leaving else { return }
+        cardReturn.start(offset: dragOffset, x: dragX, velocity: velocity) { y, x in
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) {
+                dragOffset = y
+                dragX = x
+            }
+        } done: {
+            OrientationLock.releaseHold()
+        }
     }
 
     /// التطبيق راح للخلفية أو رجع أو انفتح مركز التحكم: أي سحب كان شغّال انلغى من النظام،
     /// فنرجّع البطاقة لمكانها كامل فورًا (بدون حركة) ونمسح كل شي بدأه السحب
     private func resetInteractiveState() {
         guard !leaving else { return }
+        cardReturn.stop()
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) {
@@ -773,7 +819,7 @@ struct PlayerHost: View {
         }
     }
 
-    /// شارة زجاجية صغيرة فوق (تحت الشريط العلوي لو ظاهر)، بعيد عن الأزرار ونص الصورة، وتختفي لحالها
+    /// شارة زجاجية صغيرة فوق بالنص (تحت الشريط العلوي لو ظاهر)، ما تغطي زر التشغيل ولا أي زر، وتختفي لحالها
     @ViewBuilder
     private var zoomHint: some View {
         if let fill = zoomPill {
@@ -788,9 +834,10 @@ struct PlayerHost: View {
             .padding(.horizontal, 14).frame(height: 34)
             .background(.black.opacity(0.25), in: .capsule)
             .glassEffect(Glass.player, in: .capsule)
-            // بالنص مثل يوتيوب، وفوق زر التشغيل لو الأزرار ظاهرة عشان ما تغطيه
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .offset(y: controlsVisible || resumeShown ? -(PlayerLogic.Transport.play / 2 + 34) : 0)
+            // فوق بالنص تحت منطقة العنوان (مكان "كمّلنا من" وتحتها لو هي ظاهرة)، بعيد عن زر التشغيل
+            // وكل الأزرار بالطول والعرض. تنزل وتطلع مع ظهور الأزرار بنفس حركتها
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, (controlsVisible ? 70 + topBarExtra : 24) + (resumeShown ? 44 : 0))
             .allowsHitTesting(false)
             .transition(.asymmetric(insertion: .scale(scale: 0.86).combined(with: .opacity), removal: .opacity))
             .id(fill)
@@ -1170,4 +1217,74 @@ struct DismissCard {
         }
         return 50
     }()
+}
+
+/// رجوع بطاقة المشغّل لمكانها: سبرنق مخمّد بالضبط (critically damped) ينحسب كل إطار من الشاشة نفسها.
+/// الإزاحة: x(t) = (x0 + (v0 + ωx0)t)e^(−ωt). لو السرعة لفوق أكبر من ωx0 كانت بتعدّي مكانها، فنقصّها
+/// عند هالحد: كذا ما تطلع فوق الصفر أبد وما فيه أي نطّة. اليمين واليسار يمشون بنفس النسبة، فالبطاقة ترجع بخط واحد
+@MainActor
+final class CardReturnDriver: NSObject {
+    /// سرعة الرجوع (قريبة من ردّة الحركة القديمة 0.36 ثانية، بس بدون أي ارتداد)
+    static let omega: CGFloat = 2 * .pi / 0.4
+
+    private var link: CADisplayLink?
+    private var startTime: CFTimeInterval?
+    private var y0: CGFloat = 0
+    private var x0: CGFloat = 0
+    private var v0: CGFloat = 0
+    private var onFrame: ((CGFloat, CGFloat) -> Void)?
+    private var onDone: (() -> Void)?
+
+    var isRunning: Bool { link != nil }
+
+    /// velocity بالنقاط بالثانية (موجب = لتحت، بعيد عن المكان)
+    func start(offset: CGFloat, x: CGFloat, velocity: CGFloat,
+               frame: @escaping (CGFloat, CGFloat) -> Void, done: @escaping () -> Void) {
+        stop()
+        let y = max(0, offset)
+        guard y > 0.5 else {
+            frame(0, 0)
+            done()
+            return
+        }
+        y0 = y
+        x0 = x
+        let w = Self.omega
+        // لفوق (سالب) بحد أقصى ωy0 عشان ما تعدّي الصفر، ولتحت بحد معقول عشان ما تنزل كثير قبل ما ترجع
+        v0 = min(max(velocity.isFinite ? velocity : 0, -w * y), 1600)
+        onFrame = frame
+        onDone = done
+        startTime = nil
+        let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+        onFrame = nil
+        onDone = nil
+    }
+
+    @objc private func tick(_ l: CADisplayLink) {
+        if startTime == nil { startTime = l.timestamp }
+        // الوقت اللي بينعرض فيه هالإطار فعلًا، فالحركة ماشية مع الشاشة بالضبط
+        let t = CGFloat(max(0, l.targetTimestamp - (startTime ?? l.timestamp)))
+        let w = Self.omega
+        let b = v0 + w * y0
+        let e = CGFloat(exp(Double(-w * t)))
+        let y = max(0, (y0 + b * t) * e)
+        let vy = (v0 - w * b * t) * e
+        if t > 0.05, y < 0.35, abs(vy) < 12 {
+            let finish = onDone
+            onFrame?(0, 0)
+            stop()
+            finish?()
+            return
+        }
+        let ratio = min(max(y / y0, 0), 1.6)
+        onFrame?(y, x0 * ratio)
+    }
 }

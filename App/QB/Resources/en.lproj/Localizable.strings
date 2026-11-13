@@ -11,6 +11,7 @@
 "إخراج" = "Director";
 "إضافات" = "Add-ons";
 "إعادة المحاولة" = "Retry";
+"إعادة تحميل" = "Reload";
 "إعدادات الإضافة" = "Add-on settings";
 "إغلاق" = "Close";
 "إلغاء" = "Cancel";
@@ -50,6 +51,7 @@
 "الحلقة الجاية" = "Next episode";
 "الحلقة الجاية تلقائيًا" = "Autoplay next episode";
 "الرئيسية" = "Home";
+"الرابط انتهى" = "The link expired";
 "السجل فاضي" = "History is empty";
 "السرعة" = "Speed";
 "الصق رابط الإضافة (manifest.json)" = "Paste the add-on link (manifest.json)";
@@ -85,7 +87,6 @@
 "تخطّي المقدمة" = "Skip intro";
 "تدوير الشاشة" = "Rotate screen";
 "ترجمات" = "Subtitles";
-"تشتغل كل إضافات Stremio. الروابط اللي تبدأ بـ stremio:// تشتغل بعد" = "Any Stremio add-on works. Links starting with stremio:// work too";
 "تشغيل" = "Play";
 "تشغيل خلال %@" = "Playing in %@";
 "تصدير المكتبة" = "Export library";
@@ -156,6 +157,7 @@
 "ما قدرنا نحمّل المزيد" = "Couldn't load more";
 "ما قدرنا نشغّل هذا المصدر" = "Couldn't play this source";
 "ما قدرنا نفتح التفاصيل" = "Couldn't open the details";
+"ما قدرنا نوصل للرابط. تأكد إنه رابط إضافة Stremio ينتهي بـ %@ أو يبدأ بـ %@ وإن النت شغّال" = "We couldn't reach that link. Make sure it's a Stremio add-on link that ends with %@ or starts with %@, and that you're online";
 "ما لقينا ترجمات لهذا العمل. ثبّت إضافة ترجمات من الإعدادات" = "No subtitles found for this title. Install a subtitles add-on from Settings";
 "ما لقينا شي" = "Nothing found";
 "ما لقينا مصادر" = "No sources found";
@@ -175,6 +177,7 @@
 "مشابه" = "Similar";
 "مشاركة" = "Share";
 "مصادر" = "Sources";
+"مكبّر لملء الشاشة" = "Zoomed to fill";
 "مكتبتك فاضية" = "Your library is empty";
 "مكتبتي" = "My Library";
 "ملف الترجمة فاضي" = "The subtitle file is empty";
@@ -188,8 +191,6 @@
 "نسخ الرابط" = "Copy link";
 "نص الخطأ" = "Error details";
 "هذا شكل الترجمة" = "This is how subtitles look";
+"هذا مو رابط إضافة Stremio. لازم يكون رابط إضافة ينتهي بـ %@ أو يبدأ بـ %@" = "This isn't a Stremio add-on link. It has to be an add-on link that ends with %@ or starts with %@";
 "يحدّث" = "Refreshing";
 "يشتغل بـ VLC" = "Plays in VLC";
-"مكبّر لملء الشاشة" = "Zoomed to fill";
-"إعادة تحميل" = "Reload";
-"الرابط انتهى" = "The link expired";
