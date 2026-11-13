@@ -32,6 +32,11 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('rust/**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      - name: SeekGuard test (seek followed by stale time updates)
+        run: |
+          xcrun swiftc App/QB/Features/Player/SeekGuard.swift scripts/seekguard-test/main.swift -o "$RUNNER_TEMP/seekguard"
+          "$RUNNER_TEMP/seekguard"
+
       - name: Install Rust + iOS target
         run: |
           command -v rustup >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal

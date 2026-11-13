@@ -852,6 +852,8 @@ final class PlayerModel {
     }
 
     func skip(_ delta: Double) {
+        // elapsed يبقى على الهدف المعلّق لين يوصل له المشغّل (SeekGuard بالمشغّلين)،
+        // فالضغطات المتتالية تنحسب من الهدف: +10 +10 = +20، مو من المكان القديم
         seek(to: elapsed + delta)
     }
 

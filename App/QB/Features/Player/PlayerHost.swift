@@ -47,6 +47,9 @@ struct PlayerHost: View {
     @State private var rippleSeconds = 10
     @State private var rippleTick = 0
     @State private var rippleTask: Task<Void, Never>?
+    /// مؤشر التقديم بالضغطتين (+10 / -10 ويتجمّع): يطلع على الشريط عند رأس التشغيل، ويختفي بعد ثانية من آخر ضغطة
+    @State private var seekPeek: Int?
+    @State private var seekPeekTask: Task<Void, Never>?
     @State private var sheet: PlayerSheet?
     /// القرص بالإصبعين: مقداره الحي، ويرجع 1 بسبرنق لما تشيل أصابعك أو ينلغي
     @GestureState(resetTransaction: Transaction(animation: PlayerZoom.spring))
@@ -105,6 +108,19 @@ struct PlayerHost: View {
                 if let ripple {
                     SeekRipple(side: ripple, seconds: rippleSeconds, tick: rippleTick)
                         .allowsHitTesting(false)
+                }
+
+                // الضغطتين والأدوات مخفية: شريط التقدّم يطلع لحاله تحت مع "+10" عند رأس التشغيل
+                if let seekPeek, !controlsVisible {
+                    SeekPeekBar(elapsed: player.elapsed, duration: player.duration, label: SeekBadge.label(seekPeek))
+                        .frame(height: 44)
+                        .padding(.horizontal, 16 + max(geo.safeAreaInsets.leading, geo.safeAreaInsets.trailing))
+                        .padding(.bottom, max(geo.safeAreaInsets.bottom, 12) + 6)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .ignoresSafeArea()
+                        .opacity(dismiss.controlsOpacity)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
 
                 // وقت السحب للتقديم بس: فوق بعيد عن أزرار التشغيل، ويختفي أول ما تشيل إصبعك
@@ -460,6 +476,19 @@ struct PlayerHost: View {
         rippleTask?.cancel()
         rippleSeconds = PlayerLogic.nextSeekBurst(previous: ripple == side ? rippleSeconds : nil)
         rippleTick += 1
+        // نفس المجموع اللي بالقوس: +10 +20 +30 ... أو -10 -20 ...
+        seekPeekTask?.cancel()
+        let signed = side == .forward ? rippleSeconds : -rippleSeconds
+        if seekPeek == nil {
+            withAnimation(.easeOut(duration: 0.18)) { seekPeek = signed }
+        } else {
+            seekPeek = signed
+        }
+        seekPeekTask = Task {
+            try? await Task.sleep(for: .milliseconds(1000))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.35)) { seekPeek = nil }
+        }
         withAnimation(.easeOut(duration: 0.12)) { ripple = side }
         rippleTask = Task {
             try? await Task.sleep(for: .milliseconds(650))
@@ -662,7 +691,8 @@ struct PlayerHost: View {
                     }
                 }
             }
-            Scrubber(elapsed: player.elapsed, duration: player.duration, live: player.isLive) { t in
+            Scrubber(elapsed: player.elapsed, duration: player.duration, live: player.isLive,
+                     badge: seekPeek.map(SeekBadge.label)) { t in
                 player.seek(to: t)
                 scheduleHide()
             } onScrubbing: { scrubbing in
@@ -938,6 +968,8 @@ struct Scrubber: View {
     let duration: Double?
     /// بث مباشر فعلًا. لو المدة بس ما وصلت للحين (التحميل) نعرض --:--
     var live = false
+    /// "+10" / "-10" فوق رأس التشغيل بعد الضغطتين
+    var badge: String? = nil
     let onSeek: (Double) -> Void
     var onScrubbing: (Bool) -> Void = { _ in }
 
@@ -961,6 +993,15 @@ struct Scrubber: View {
                 }
                 .frame(height: dragValue == nil ? 5 : 8)
                 .frame(maxHeight: .infinity)
+                .overlay {
+                    if let badge, dragValue == nil, total > 0 {
+                        SeekBadge(text: badge)
+                            .position(x: SeekBadge.centerX(geo.size.width * fraction, width: geo.size.width), y: -12)
+                            .animation(.linear(duration: 0.2), value: fraction)
+                            .transition(.opacity)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -1048,6 +1089,73 @@ struct SoftPressStyle: ButtonStyle {
 }
 
 /// تقديم/رجوع مثل يوتيوب: قوس شفاف على طرف الشاشة وأسهم صغيرة وعدد الثواني، بدون زر
+/// الحبة الذهبية "+10" / "-10" فوق رأس التشغيل
+struct SeekBadge: View {
+    let text: String
+    static let minWidth: CGFloat = 46
+
+    static func label(_ seconds: Int) -> String { seconds > 0 ? "+\(seconds)" : "\(seconds)" }
+
+    /// نصها على رأس التشغيل، وما تطلع برا طرفي الشريط
+    static func centerX(_ x: CGFloat, width: CGFloat) -> CGFloat {
+        let half = minWidth / 2
+        guard width > minWidth else { return width / 2 }
+        return min(max(x, half), width - half)
+    }
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.system(size: 13, weight: .heavy, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(Palette.onAccent)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .frame(minWidth: Self.minWidth)
+            .background(Palette.accent, in: Capsule())
+            .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
+            .environment(\.layoutDirection, .leftToRight)
+            .contentTransition(.numericText())
+            .animation(.snappy(duration: 0.2), value: text)
+            .accessibilityHidden(true)
+    }
+}
+
+/// شريط تقدّم صغير يطلع لحاله وقت الضغطتين والأدوات مخفية: الجزء اللي انعرض بلون التطبيق،
+/// والحبة على رأس التشغيل تمشي معه (الوقت ثابت على الهدف وقت التقديم، فما ترجع لورا)
+struct SeekPeekBar: View {
+    let elapsed: Double
+    let duration: Double?
+    let label: String
+
+    var body: some View {
+        GeometryReader { geo in
+            let total = duration ?? 0
+            let fraction = total > 0 ? min(max(elapsed / total, 0), 1) : 0
+            let x = geo.size.width * fraction
+            let barY = geo.size.height - 5
+            ZStack(alignment: .topLeading) {
+                Capsule().fill(.white.opacity(0.28))
+                    .frame(width: geo.size.width, height: 4)
+                    .position(x: geo.size.width / 2, y: barY)
+                Capsule().fill(Palette.accent)
+                    .frame(width: max(x, 0.01), height: 4)
+                    .position(x: x / 2, y: barY)
+                Circle().fill(Palette.accent)
+                    .frame(width: 11, height: 11)
+                    .shadow(color: .black.opacity(0.3), radius: 2)
+                    .position(x: x, y: barY)
+                    .opacity(total > 0 ? 1 : 0)
+                SeekBadge(text: label)
+                    .position(x: SeekBadge.centerX(x, width: geo.size.width), y: barY - 22)
+                    .opacity(total > 0 ? 1 : 0)
+            }
+            .animation(.linear(duration: 0.2), value: fraction)
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .accessibilityHidden(true)
+    }
+}
+
 struct SeekRipple: View {
     let side: PlayerHost.RippleSide
     let seconds: Int

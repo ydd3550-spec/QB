@@ -134,6 +134,9 @@ final class NativeEngine: NSObject, PlaybackEngine {
     private var didInitialSeek = false
     /// وقت التقديم لمكان الاستكمال: المراقب ينتظر لين يخلص (التقديم بملف كبير على النت يطول)
     private var seekingToStart = false
+    /// يمسك مكان التقديم لين يخلص فعلًا: الوقت القديم من المشغّل ما يرجّع الشريط لورا
+    private var seekGuard = SeekGuard()
+    private static var clock: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     override init() {
         super.init()
@@ -191,6 +194,12 @@ final class NativeEngine: NSObject, PlaybackEngine {
         tracksLoaded = false
         didInitialSeek = false
         self.startAt = startAt
+        seekGuard.cancel()
+        // الاستكمال: الشريط على مكان الاستكمال من البداية، مو صفر وبعدين ينط
+        if startAt > 1 {
+            seekGuard.begin(startAt, now: Self.clock)
+            elapsed = startAt
+        }
         var options: [String: Any] = [:]
         if !headers.isEmpty { options["AVURLAssetHTTPHeaderFieldsKey"] = headers }
         let asset = AVURLAsset(url: url, options: options)
@@ -233,11 +242,13 @@ final class NativeEngine: NSObject, PlaybackEngine {
                 if startAt > 1, !didInitialSeek {
                     didInitialSeek = true
                     seekingToStart = true
+                    let resumeTarget = startAt
                     player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600),
                                 toleranceBefore: CMTime(seconds: 1, preferredTimescale: 600),
-                                toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600)) { [weak self] _ in
+                                toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600)) { [weak self] finished in
                         Task { @MainActor [weak self] in
                             guard let self else { return }
+                            if finished { self.seekGuard.confirm(resumeTarget, now: Self.clock) }
                             // نبدأ عد المراقب من بعد ما يوصل لمكان الاستكمال
                             self.seekingToStart = false
                             self.readyAt = Date()
@@ -257,7 +268,9 @@ final class NativeEngine: NSObject, PlaybackEngine {
         }
 
         let t = item.currentTime().seconds
-        if t.isFinite { elapsed = max(0, t) }
+        // وقت التقديم: المراقب يبلّغ الوقت القديم لين يخلص التقديم (خاصة MKV اللي يعيد التحويل من المكان الجديد)،
+        // فنعرض الهدف بس ونتجاهل الوقت القديم. ولا مرة يرجع الشريط لورا
+        if t.isFinite { elapsed = seekGuard.resolve(reported: max(0, t), now: Self.clock) }
         duration = Self.duration(of: item)
 
         if t.isFinite, abs(t - lastProgressTime) > 0.05 {
@@ -349,7 +362,7 @@ final class NativeEngine: NSObject, PlaybackEngine {
 
     /// للترجمة: وقت AVPlayer الحي مباشرة
     var liveTime: Double {
-        if seekingToStart { return elapsed }
+        if seekingToStart || seekGuard.isPending { return elapsed }
         let t = player.currentTime().seconds
         return t.isFinite && t >= 0 ? t : elapsed
     }
@@ -377,9 +390,20 @@ final class NativeEngine: NSObject, PlaybackEngine {
 
     func seek(to seconds: Double) {
         let target = max(0, seconds)
+        // تقديم جديد يلغي اللي قبله (AVPlayer يكمّل اللي قبله بـ finished = false)، والشريط يبقى على الهدف لين يوصل
+        seekGuard.begin(target, now: Self.clock)
         elapsed = target
         lastProgressAt = Date()
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: CMTime(seconds: 0.5, preferredTimescale: 600), toleranceAfter: CMTime(seconds: 0.5, preferredTimescale: 600))
+        // ما ينزل قبل الهدف (toleranceBefore صفر)، فما فيه خطوة صغيرة لورا بعد ما يوصل
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero,
+                    toleranceAfter: CMTime(seconds: 0.5, preferredTimescale: 600)) { [weak self] finished in
+            guard finished else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.seekGuard.confirm(target, now: Self.clock)
+                self.lastProgressAt = Date()
+            }
+        }
         if state == .ended, wantsPlay { player.playImmediately(atRate: rate) }
     }
 

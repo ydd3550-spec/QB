@@ -160,6 +160,10 @@ final class VLCEngine: PlaybackEngine {
     private var lastTime: Double = -1
     private var lastMove = Date()
     private var pendingSeekUntil = Date.distantPast
+    /// يمسك مكان التقديم لين VLC يوصله فعلًا. قبل كان فيه مهلة ثابتة 1.2 ثانية، ومع النت التقديم يطوّل
+    /// أكثر منها، فيرجع الوقت القديم يكتب فوق الجديد ويرجع الشريط لورا ثم قدام
+    private var seekGuard = SeekGuard()
+    private static var clock: TimeInterval { ProcessInfo.processInfo.systemUptime }
     /// مكان الاستكمال: لو VLC تجاهل start-time (بعض روابط النت) نقدّم له بأنفسنا أول ما يشتغل
     private var resumeAt: Double = 0
     private var resumeChecked = false
@@ -201,6 +205,11 @@ final class VLCEngine: PlaybackEngine {
         sourceHeaders = headers
         let media = makeMedia(url: url, headers: headers, startAt: startAt)
         resumeAt = startAt
+        // الاستكمال: الشريط على مكان الاستكمال من البداية، مو صفر وبعدين ينط
+        if startAt > 1 {
+            seekGuard.begin(startAt, now: Self.clock)
+            elapsed = startAt
+        }
         view.onRelayout = { [weak self] in self?.applyCrop() }
         observeApp()
         player.drawable = view
@@ -342,6 +351,7 @@ final class VLCEngine: PlaybackEngine {
                 guard let self, !self.shutDown else { return }
                 self.resumeAt = at
                 self.resumeChecked = false
+                if at > 1 { self.seekGuard.begin(at, now: Self.clock) }
                 self.hasPlayed = false
                 self.opened = false
                 self.everPictures = false
@@ -449,7 +459,7 @@ final class VLCEngine: PlaybackEngine {
     var liveTime: Double {
         // الصورة واقفة: الترجمة توقف عند آخر صورة انعرضت
         if state == .playing, pictureFrozen { return min(elapsed, frameTime) }
-        guard state == .playing, Date() > pendingSeekUntil, clockAt != .distantPast else { return elapsed }
+        guard state == .playing, Date() > pendingSeekUntil, !seekGuard.isPending, clockAt != .distantPast else { return elapsed }
         let ahead = min(Date().timeIntervalSince(clockAt), 1.0) * Double(wantedRate)
         return max(elapsed, clockTime + max(0, ahead))
     }
@@ -485,9 +495,12 @@ final class VLCEngine: PlaybackEngine {
         }
 
         let t = Double(player.time.intValue) / 1000
-        if t.isFinite, t >= 0, Date() > pendingSeekUntil {
-            elapsed = t
-            if t != clockTime || !player.isPlaying {
+        if t.isFinite, t >= 0 {
+            // وقت التقديم: VLC يكمّل يبلّغ الوقت القديم لين يوصل للمكان الجديد. نعرض الهدف بس لين يوصله
+            // (أو يتعداه)، فالشريط والوقت والترجمة ما يرجعون لورا ولا لحظة
+            let shown = seekGuard.resolve(reported: t, now: Self.clock)
+            elapsed = shown
+            if !seekGuard.isPending, t != clockTime || !player.isPlaying {
                 clockTime = t
                 clockAt = Date()
             }
@@ -517,6 +530,8 @@ final class VLCEngine: PlaybackEngine {
         }
         // مباشر: اشتغل فعلًا، ما له مدة، وما يقبل التقديم
         isLive = hasPlayed && duration == nil && !player.isSeekable && elapsed > 3
+        // بث ما يقبل التقديم: ما فيه هدف ننتظره
+        if seekGuard.isPending, hasPlayed, !player.isSeekable { seekGuard.cancel() }
 
         if player.isPlaying {
             let moving = Date().timeIntervalSince(lastMove) < 1.5
@@ -613,6 +628,8 @@ final class VLCEngine: PlaybackEngine {
     func seek(to seconds: Double) {
         guard started, !shutDown else { return }
         let target = max(0, seconds)
+        // تقديم جديد يلغي المعلّق، والضغطات المتتالية تنحسب من الهدف (PlayerModel.skip)
+        seekGuard.begin(target, now: Self.clock)
         elapsed = target
         clockTime = target
         clockAt = .distantPast
