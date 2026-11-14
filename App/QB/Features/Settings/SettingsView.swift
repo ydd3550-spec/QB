@@ -80,32 +80,6 @@ struct SettingsView: View {
                     } label: {
                         row(L("لغة الترجمة"), "captions.bubble.fill")
                     }
-                    VStack(alignment: .leading, spacing: 8) {
-                        row(L("حجم الترجمة"), "textformat.size", detail: "\(Int((app.subtitleSize * 100).rounded()))%")
-                        // صغير يسار وكبير يمين دايمًا (مثل أبل)، عشان مكان المؤشر يطابق الرقم
-                        Slider(value: Binding(get: { app.subtitleSize }, set: { app.subtitleSize = ($0 * 10).rounded() / 10 }), in: 0.7...1.8, step: 0.1) {
-                            Text(L("حجم الترجمة"))
-                        } minimumValueLabel: {
-                            Image(systemName: "textformat.size.smaller").font(.caption).foregroundStyle(.secondary)
-                        } maximumValueLabel: {
-                            Image(systemName: "textformat.size.larger").font(.body).foregroundStyle(.secondary)
-                        } onEditingChanged: { editing in
-                            if !editing { app.save("subtitle_size", String(format: "%.1f", app.subtitleSize)) }
-                        }
-                        .environment(\.layoutDirection, .leftToRight)
-                        Text(L("هذا شكل الترجمة"))
-                            .font(Typo.font(.semibold, 19 * app.subtitleSize, .title3))
-                            .foregroundStyle(.white)
-                            // ظل مثل الترجمة بالمشغّل عشان تنقرا حتى على الزجاج الأبيض
-                            .shadow(color: .black.opacity(0.85), radius: 1.2, y: 0.5)
-                            .shadow(color: .black.opacity(0.45), radius: 5)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(.black.opacity(app.subtitleBackground ? 0.6 : 0.0), in: RoundedRectangle(cornerRadius: 8))
-                            .animation(.smooth(duration: 0.25), value: app.subtitleBackground)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background { LuminousGlass(cornerRadius: 16) }
-                    }
                     Toggle(isOn: Binding(get: { app.subtitleBackground }, set: { app.subtitleBackground = $0; app.save("subtitle_background", $0 ? "1" : "0") })) {
                         row(L("خلفية للترجمة"), "rectangle.fill")
                     }
