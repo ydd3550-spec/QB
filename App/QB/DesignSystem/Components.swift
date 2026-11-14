@@ -280,6 +280,7 @@ struct EmptyStateView: View {
                 .foregroundStyle(Palette.accent)
                 .frame(width: 84, height: 84)
                 .glassEffect(.regular, in: .circle)
+                .shadow(color: Palette.accent.opacity(0.35), radius: 18)
             Text(title).font(Typo.title).multilineTextAlignment(.center)
             if let message {
                 Text(message).font(Typo.info).foregroundStyle(.secondary).multilineTextAlignment(.center)

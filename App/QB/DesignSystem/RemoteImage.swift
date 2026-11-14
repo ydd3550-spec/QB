@@ -15,13 +15,13 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
     private let session: URLSession
 
     private init() {
-        memory.countLimit = 400
-        memory.totalCostLimit = 120 * 1024 * 1024
+        memory.countLimit = 800
+        memory.totalCostLimit = 200 * 1024 * 1024
         let config = URLSessionConfiguration.default
         config.urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 400 * 1024 * 1024)
         config.requestCachePolicy = .returnCacheDataElseLoad
-        config.timeoutIntervalForRequest = 20
-        config.httpMaximumConnectionsPerHost = 6
+        config.timeoutIntervalForRequest = 15
+        config.httpMaximumConnectionsPerHost = 8
         session = URLSession(configuration: config)
     }
 
@@ -89,6 +89,18 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
     func store(_ image: UIImage, for url: URL, maxPixel: CGFloat) {
         let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
         memory.setObject(image, forKey: key(url, maxPixel), cost: cost)
+    }
+
+    /// prefetch: يحمّل صور الرفّ (البوسترات) مسبقًا بخفض أولوية، عشان التمرير يكون ناعم
+    func prefetch(_ urls: [String?], maxPixel: CGFloat = 360) {
+        for u in urls {
+            guard let s = u, let url = URL(string: s) else { continue }
+            if cached(url, maxPixel: maxPixel) != nil { continue }
+            Task.detached(priority: .utility) { [weak self] in
+                guard let self else { return }
+                _ = await self.image(for: url, maxPixel: maxPixel)
+            }
+        }
     }
 
     func clearMemory() { memory.removeAllObjects() }

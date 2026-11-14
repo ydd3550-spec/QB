@@ -154,6 +154,7 @@ final class SearchModel {
                 if Task.isCancelled { break }
                 guard !row.items.isEmpty else { continue }
                 withAnimation(Motion.standard) { rows.append(row) }
+                ImagePipeline.shared.prefetch(row.items.map(\.poster), maxPixel: 360)
             }
         } onCancel: {
             work.cancel()
