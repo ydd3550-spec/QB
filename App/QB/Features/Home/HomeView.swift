@@ -192,6 +192,7 @@ struct HomeView: View {
 /// البانر البارز أعلى الرئيسية
 struct HeroBanner: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let item: MetaPreview
     let namespace: Namespace.ID
 
@@ -268,7 +269,7 @@ struct HeroBanner: View {
         }
         .buttonStyle(.plain)
         // parallax خفيف: الصورة تتحرك ببطء وقت التمرير عشان عمق 3D
-        .scrollTransition(.animated(threshold: .visible(0.3))) { content, phase in
+        .scrollTransition(reduceMotion ? .identity : .animated.threshold(.visible(0.3))) { content, phase in
             content
                 .offset(y: phase.value * -24)
                 .scaleEffect(1 + (phase.value < 0 ? phase.value * -0.04 : 0))
