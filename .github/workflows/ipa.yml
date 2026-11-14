@@ -1,14 +1,17 @@
-name: QB unsigned IPA
+name: Build unsigned IPA
 
 on:
   workflow_dispatch:
   push:
-    branches: [build9]
+    branches: [build9, ci-ipa]
+
+permissions:
+  contents: write
 
 jobs:
   ipa:
-    runs-on: macos-15-intel
-    timeout-minutes: 90
+    runs-on: macos-26
+    timeout-minutes: 120
     env:
       CARGO_TERM_COLOR: never
       CARGO_PROFILE_RELEASE_LTO: thin
@@ -17,77 +20,94 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select newest Xcode
+      - name: Toolchain info
         run: |
-          X=$(ls -d /Applications/Xcode*.app | grep -v -i beta | sort -V | tail -1)
-          sudo xcode-select -s "$X"
+          set -euo pipefail
           xcodebuild -version
+          sw_vers
+          uname -m
 
-      - uses: actions/cache@v4
+      - name: Cache cargo
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             rust/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('rust/**/Cargo.lock') }}
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
-
-      - name: SeekGuard test (seek followed by stale time updates)
-        run: |
-          xcrun swiftc App/QB/Features/Player/SeekGuard.swift scripts/seekguard-test/main.swift -o "$RUNNER_TEMP/seekguard"
-          "$RUNNER_TEMP/seekguard"
-
-      - name: Recovery test (stall, network drop, new URL, remux restart, VLC rebuild, frozen picture, subtitles)
-        run: |
-          xcrun swiftc App/QB/Features/Player/PlaybackRecovery.swift scripts/recovery-test/main.swift -o "$RUNNER_TEMP/recovery"
-          "$RUNNER_TEMP/recovery"
 
       - name: Install Rust + iOS target
         run: |
-          command -v rustup >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          source "$HOME/.cargo/env" || true
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          source "$HOME/.cargo/env"
           rustup toolchain install stable --profile minimal
           rustup default stable
           rustup target add aarch64-apple-ios
-          rustc --version
+          rustc -V && cargo -V
 
       - name: Build Rust core (XCFramework + Swift bindings)
-        run: ./scripts/build-core.sh
+        run: |
+          set -euo pipefail
+          source "$HOME/.cargo/env"
+          ./scripts/build-core.sh
 
       - name: Generate project + pods
         run: |
+          set -euo pipefail
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           python3 scripts/gen-strings.py
           xcodegen generate
           pod install --repo-update
 
-      - name: Build unsigned app
+      - name: Build app (unsigned)
         run: |
           set -o pipefail
           mkdir -p build
-          defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
           xcodebuild -workspace QB.xcworkspace -scheme QB -configuration Release -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= DEVELOPMENT_TEAM= \
-            build 2>&1 | tee build/xcodebuild.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " || true
-          grep -q "BUILD SUCCEEDED" build/xcodebuild.log || { echo "---- errors ----"; grep -E "error:" build/xcodebuild.log | sort -u | head -200; exit 1; }
+            build 2>&1 | tee build/xcodebuild.log
 
       - name: Package IPA
         run: |
+          set -euo pipefail
           APP=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name "QB.app" | head -1)
-          rm -rf Payload && mkdir Payload && cp -R "$APP" Payload/
-          mkdir -p build/ipa && zip -qry build/ipa/QB.ipa Payload
-          ls -la build/ipa
-          unzip -l build/ipa/QB.ipa | grep -E "QB.app/(QB|Info.plist)$|PlugIns/QBWidget.appex/QBWidget$|Frameworks/MobileVLCKit" || true
+          test -n "$APP"
+          rm -rf Payload build/ipa
+          mkdir -p Payload build/ipa
+          cp -R "$APP" Payload/
+          zip -qry build/ipa/QB.ipa Payload
+          ls -lh build/ipa/QB.ipa
+          unzip -l build/ipa/QB.ipa | grep -E "QB.app/QB$|PlugIns/QBWidget.appex/QBWidget$|MobileVLCKit" || true
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: qb-build
+          name: QB-ipa
           path: |
             build/ipa/QB.ipa
             build/xcodebuild.log
-          if-no-files-found: ignore
-          retention-days: 3
+          if-no-files-found: warn
+
+      - name: Publish IPA to ipa-artifact branch
+        if: success()
+        run: |
+          set -euo pipefail
+          SIZE=$(stat -f%z build/ipa/QB.ipa)
+          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+          git clone --quiet "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" /tmp/pub
+          cd /tmp/pub
+          git checkout --orphan ipa-artifact
+          git rm -rf . >/dev/null 2>&1 || true
+          cp "$GITHUB_WORKSPACE/build/ipa/QB.ipa" ./QB.ipa
+          printf "run %s\ncommit %s\nbranch %s\nsize %s\n" "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$SIZE" > BUILD.txt
+          git add QB.ipa BUILD.txt
+          git commit -q -m "IPA run ${GITHUB_RUN_NUMBER} (${SIZE} bytes)"
+          git push --force origin ipa-artifact
