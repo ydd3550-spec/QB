@@ -44,6 +44,12 @@ final class AppModel {
     var subtitleLang: String = "ara"
     var subtitleSize: Double = 1.0
     var subtitleBackground = true
+    /// شكل الترجمة: 0 ظل، 1 صندوق، 2 بدون خلفية
+    var subtitleStyle: Int = 0
+    /// وزن خط الترجمة: 0 عادي، 1 سميك، 2 عريض
+    var subtitleWeight: Int = 1
+    /// مكان الترجمة: 0.8 منخفض، 1 وسط، 1.4 مرتفع
+    var subtitlePosition: Double = 1.0
     var autoNext = true
     var skipIntroSeconds = 85
     var autoPiP = true
@@ -121,6 +127,9 @@ final class AppModel {
         subtitleLang = get("subtitle_lang") ?? (language == .arabic ? "ara" : "eng")
         subtitleSize = Double(get("subtitle_size") ?? "") ?? 1.0
         subtitleBackground = (get("subtitle_background") ?? "1") == "1"
+        subtitleStyle = Int(get("subtitle_style") ?? "") ?? (subtitleBackground ? 1 : 0)
+        subtitleWeight = Int(get("subtitle_weight") ?? "") ?? 1
+        subtitlePosition = Double(get("subtitle_position") ?? "") ?? 1.0
         autoNext = (get("auto_next") ?? "1") == "1"
         skipIntroSeconds = Int(get("skip_intro_seconds") ?? "") ?? 85
         autoPiP = (get("auto_pip") ?? "1") == "1"

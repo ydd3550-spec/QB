@@ -89,6 +89,8 @@ protocol PlaybackEngine: AnyObject {
     var bytesReceived: Int64? { get }
     /// عدّاد يزيد مع كل إطار ينعرض (nil = ما نعرف). للصورة الواقفة والوقت ماشي
     var framesShown: Int? { get }
+    /// صورة من الفيديو عند ثانية معيّنة (لمعاينة السحب). nil = المشغّل ما يقدر يعطيها
+    func frameImage(at seconds: Double) async -> UIImage?
     /// الصورة واقفة: نربط مخرج الصورة من جديد ونرجع لآخر إطار انعرض، بدون ما نوقف المشغّل
     func recoverPicture(at seconds: Double)
 }
@@ -96,6 +98,7 @@ protocol PlaybackEngine: AnyObject {
 extension PlaybackEngine {
     var bytesReceived: Int64? { nil }
     var framesShown: Int? { nil }
+    func frameImage(at seconds: Double) async -> UIImage? { nil }
     func recoverPicture(at seconds: Double) { seek(to: seconds); refreshLayout() }
 }
 

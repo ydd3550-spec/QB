@@ -60,11 +60,15 @@ struct PlayerHost: View {
     /// الشارة الصغيرة "تكبير لملء الشاشة" / "الحجم الأصلي"
     @State private var zoomPill: Bool?
     @State private var zoomPillTick = 0
+    /// صورة إطار للمعاينة وقت السحب، وآخر ثانية طلبنا لها صورة
+    @State private var previewImage: UIImage?
+    @State private var previewAt: Double = -1
+    @State private var previewTask: Task<Void, Never>?
 
     enum RippleSide { case back, forward }
 
     enum PlayerSheet: String, Identifiable {
-        case tracks, sources, similar, speed
+        case tracks, sources, similar, speed, subtitle
         var id: String { rawValue }
     }
 
@@ -101,9 +105,10 @@ struct PlayerHost: View {
                 let subs = PlayerLogic.subtitlePlacement(
                     screen: screen, video: player.videoSize, fill: player.videoFill,
                     safeBottom: stableSafeBottom(geo, screen: screen), controlsVisible: controlsVisible)
-                SubtitleOverlay(text: player.cueText, scale: app.subtitleSize * Double(subs.scale), background: app.subtitleBackground)
+                SubtitleOverlay(text: player.cueText, scale: app.subtitleSize * Double(subs.scale),
+                                weight: app.subtitleWeight, style: app.subtitleStyle)
                     .padding(.horizontal, max(geo.safeAreaInsets.leading, geo.safeAreaInsets.trailing))
-                    .padding(.bottom, subs.bottom)
+                    .padding(.bottom, max(8, subs.bottom * app.subtitlePosition))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea()
                     .animation(Motion.standard, value: subs)
@@ -265,6 +270,7 @@ struct PlayerHost: View {
                 case .sources: PlayerSourcesSheet()
                 case .similar: SimilarSheet()
                 case .speed: SpeedSheet()
+                case .subtitle: SubtitleStyleSheet()
                 }
             }
             .environment(app)
@@ -542,15 +548,39 @@ struct PlayerHost: View {
         scheduleHide()
     }
 
+    /// صورة معاينة للسحب: نطلبها كل نص ثانية بالكثير عشان ما نغرق المشغّل، ونتجاهل الطلبات القديمة
+    private func requestPreview(at t: Double) {
+        guard abs(t - previewAt) > 0.5 else { return }
+        previewAt = t
+        previewTask?.cancel()
+        previewTask = Task {
+            try? await Task.sleep(for: .milliseconds(60))
+            guard !Task.isCancelled else { return }
+            guard let image = await player.previewFrame(at: t) else { return }
+            guard !Task.isCancelled else { return }
+            previewImage = image
+        }
+    }
+
     // MARK: - الأدوات
 
     private var controls: some View {
         ZStack {
-            // تظليل أعلى وأسفل عشان الأزرار تبان فوق أي فيديو
-            VStack {
-                LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom).frame(height: 150)
-                Spacer()
-                LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom).frame(height: 200)
+            // تدرّج ناعم بثلاث محطات بدل شريط أسود صريح: الأزرار تبان فوق أي فيديو بدون ما يقطع الصورة
+            VStack(spacing: 0) {
+                LinearGradient(stops: [
+                    .init(color: .black.opacity(0.66), location: 0),
+                    .init(color: .black.opacity(0.30), location: 0.52),
+                    .init(color: .clear, location: 1)
+                ], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 172)
+                Spacer(minLength: 0)
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.34), location: 0.42),
+                    .init(color: .black.opacity(0.78), location: 1)
+                ], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 232)
             }
             .ignoresSafeArea()
             .allowsHitTesting(false)
@@ -643,8 +673,36 @@ struct PlayerHost: View {
         .accessibilityLabel(L("إعادة تحميل"))
     }
 
-    /// بالنص زر التشغيل/الإيقاف بس. التقديم والرجوع بضغطتين على طرف الشاشة مثل يوتيوب
+    /// بالنص: تشغيل وإيقاف، وبجنبه رجوع/تقديم ١٠ ثواني (الضغطتين على طرف الشاشة تبقى بعد)
     private var transport: some View {
+        HStack(spacing: 30) {
+            skipButton(forward: false)
+            playButton
+            skipButton(forward: true)
+        }
+        .environment(\.layoutDirection, .leftToRight)
+        .opacity(player.errorMessage == nil ? 0.92 : 0)
+    }
+
+    private func skipButton(forward: Bool) -> some View {
+        Button {
+            Haptics.tap()
+            player.skip(forward ? 10 : -10)
+            flash(forward ? .forward : .back)
+            scheduleHide()
+        } label: {
+            Image(systemName: forward ? "goforward.10" : "gobackward.10")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 54, height: 54)
+                .contentShape(Circle())
+        }
+        .buttonStyle(SoftPressStyle())
+        .glassEffect(Glass.player.interactive(), in: .circle)
+        .accessibilityLabel(forward ? L("تقديم 10 ثواني") : L("رجوع 10 ثواني"))
+    }
+
+    private var playButton: some View {
         Button {
             // الشكل يتغيّر فورًا والأمر يروح للمشغّل على طول
             let next = !(optimisticPlaying ?? player.isPlaying)
@@ -682,7 +740,6 @@ struct PlayerHost: View {
         .accessibilityAction(named: L("تقديم 10 ثواني")) { player.skip(10) }
         .accessibilityAction(named: player.videoFill ? L("الحجم الأصلي") : L("تكبير لملء الشاشة")) { setZoom(!player.videoFill) }
         .environment(\.layoutDirection, .leftToRight)
-        .opacity(player.errorMessage == nil ? 0.92 : 0)
     }
 
     private var shownPlaying: Bool { optimisticPlaying ?? player.isPlaying }
@@ -712,11 +769,19 @@ struct PlayerHost: View {
                 }
             }
             Scrubber(elapsed: player.elapsed, duration: player.duration, live: player.isLive,
-                     badge: seekPeek.map(SeekBadge.label)) { t in
+                     badge: seekPeek.map(SeekBadge.label),
+                     preview: previewImage,
+                     poster: player.context?.meta?.background ?? player.context?.ref.background ?? player.context?.ref.poster) { t in
                 player.seek(to: t)
                 scheduleHide()
             } onScrubbing: { scrubbing in
-                if scrubbing { hideTask?.cancel() } else { scheduleHide() }
+                if scrubbing { hideTask?.cancel() } else {
+                    scheduleHide()
+                    previewImage = nil
+                    previewAt = -1
+                }
+            } onPreview: { t in
+                requestPreview(at: t)
             }
             // الأزرار تحت كلها تبان كاملة دايم: صف واحد عادي، ولو ما وسع صف أصغر شوي، ولو ما وسع صفّين.
             // ما فيه تمرير ولا زر مقصوص على الطرف
@@ -757,7 +822,13 @@ struct PlayerHost: View {
         sourcesChip(compact: compact)
         speedChip(compact: compact)
         similarChip(compact: compact)
+        styleChip(compact: compact)
         engineMenu(compact: compact)
+    }
+
+    /// شكل الترجمة: حجمها ووزنها وخلفيتها ومكانها — والمعاينة حية على الصورة نفسها
+    private func styleChip(compact: Bool) -> some View {
+        pill(L("شكل الترجمة"), "textformat.size", compact: compact) { sheet = .subtitle }
     }
 
     private func tracksChip(compact: Bool) -> some View {
@@ -990,63 +1061,33 @@ struct Scrubber: View {
     var live = false
     /// "+10" / "-10" فوق رأس التشغيل بعد الضغطتين
     var badge: String? = nil
+    /// صورة إطار من الفيديو وقت السحب (nil = نعرض غلاف العمل)
+    var preview: UIImage? = nil
+    var poster: String? = nil
     let onSeek: (Double) -> Void
     var onScrubbing: (Bool) -> Void = { _ in }
+    var onPreview: (Double) -> Void = { _ in }
 
     @State private var dragValue: Double?
 
     var body: some View {
         let total = duration ?? 0
         let shown = dragValue ?? elapsed
-        VStack(spacing: 6) {
-            GeometryReader { geo in
-                let fraction = total > 0 ? min(max(shown / total, 0), 1) : 0
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.25))
-                    Capsule().fill(Palette.accent).frame(width: geo.size.width * fraction)
-                    Circle()
-                        .fill(.white)
-                        .frame(width: dragValue == nil ? 13 : 20, height: dragValue == nil ? 13 : 20)
-                        .shadow(color: .black.opacity(0.3), radius: 3)
-                        .offset(x: geo.size.width * fraction - (dragValue == nil ? 6.5 : 10))
-                        .opacity(total > 0 ? 1 : 0)
-                }
-                .frame(height: dragValue == nil ? 5 : 8)
-                .frame(maxHeight: .infinity)
-                .overlay {
-                    if let badge, dragValue == nil, total > 0 {
-                        SeekBadge(text: badge)
-                            .position(x: SeekBadge.centerX(geo.size.width * fraction, width: geo.size.width), y: -12)
-                            .animation(.linear(duration: 0.2), value: fraction)
-                            .transition(.opacity)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { v in
-                            guard total > 0 else { return }
-                            if dragValue == nil { onScrubbing(true) }
-                            dragValue = min(max(Double(v.location.x / geo.size.width), 0), 1) * total
-                        }
-                        .onEnded { _ in
-                            if let d = dragValue { onSeek(d) }
-                            dragValue = nil
-                            onScrubbing(false)
-                        }
-                )
-                .animation(Motion.snappy, value: dragValue == nil)
+        VStack(spacing: dragValue == nil ? 5 : 10) {
+            if dragValue != nil, total > 0 {
+                previewCard(shown: shown, total: total)
+                    .transition(.asymmetric(insertion: .scale(scale: 0.9).combined(with: .opacity), removal: .opacity))
             }
-            .frame(height: 24)
+            bar(shown: shown, total: total)
             HStack {
                 Text(TimeFormat.clock(shown))
                 Spacer()
                 Text(Self.trailingLabel(elapsed: shown, duration: duration, live: live))
             }
             .font(Typo.time)
-            .foregroundStyle(.white.opacity(0.8))
+            .foregroundStyle(.white.opacity(dragValue == nil ? 0.8 : 0.45))
         }
+        .animation(Motion.snappy, value: dragValue == nil)
         .environment(\.layoutDirection, .leftToRight)
         .accessibilityElement()
         .accessibilityLabel(L("التقدّم"))
@@ -1058,6 +1099,99 @@ struct Scrubber: View {
             @unknown default: break
             }
         }
+    }
+
+    /// الصورة اللي تطلع فوق الشريط وقت السحب: إطار من الفيديو نفسه، وإلا غلاف العمل مموّه، والوقت كبير فوقها
+    private func previewCard(shown: Double, total: Double) -> some View {
+        ZStack {
+            if let preview {
+                Image(uiImage: preview)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if let poster {
+                RemoteImage(url: poster, maxPixel: 480)
+                    .blur(radius: 3)
+                    .overlay(.black.opacity(0.28))
+            } else {
+                LinearGradient(colors: [Palette.surfaceRaised, .black], startPoint: .top, endPoint: .bottom)
+            }
+        }
+        .frame(width: 184, height: 104)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.55), radius: 18, y: 8)
+        .overlay(alignment: .bottom) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(TimeFormat.clock(shown))
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                Text("/ " + TimeFormat.clock(total))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.65))
+            }
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.black.opacity(0.55), in: .capsule)
+            .padding(.bottom, 7)
+        }
+    }
+
+    private func bar(shown: Double, total: Double) -> some View {
+        GeometryReader { geo in
+            let fraction = total > 0 ? min(max(shown / total, 0), 1) : 0
+            let dragging = dragValue != nil
+            let knob: CGFloat = dragging ? 15 : 11
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(.white.opacity(0.24))
+                Capsule()
+                    .fill(LinearGradient(colors: [Palette.accent.opacity(0.82), Palette.accent],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(0, geo.size.width * fraction))
+                Circle()
+                    .fill(.white)
+                    .frame(width: knob, height: knob)
+                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
+                    .offset(x: max(0, geo.size.width * fraction) - knob / 2)
+                    .opacity(total > 0 ? 1 : 0)
+            }
+            .frame(height: dragging ? 5 : 3)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                if let badge, dragValue == nil, total > 0 {
+                    SeekBadge(text: badge)
+                        .position(x: SeekBadge.centerX(geo.size.width * fraction, width: geo.size.width), y: -12)
+                        .animation(.linear(duration: 0.2), value: fraction)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        guard total > 0 else { return }
+                        if dragValue == nil {
+                            onScrubbing(true)
+                            Haptics.tap()
+                        }
+                        let value = min(max(Double(v.location.x / geo.size.width), 0), 1) * total
+                        dragValue = value
+                        onPreview(value)
+                    }
+                    .onEnded { _ in
+                        if let d = dragValue { onSeek(d) }
+                        dragValue = nil
+                        onScrubbing(false)
+                    }
+            )
+            .animation(Motion.snappy, value: dragValue == nil)
+        }
+        .frame(height: 28)
     }
 }
 
@@ -1072,25 +1206,36 @@ extension Scrubber {
     }
 }
 
-/// الترجمة فوق الفيديو
+/// الترجمة فوق الفيديو: الحجم والوزن والخلفية والمكان من إعدادات المستخدم
 struct SubtitleOverlay: View {
     let text: String?
     let scale: Double
-    let background: Bool
+    /// 0 عادي، 1 سميك، 2 عريض
+    var weight: Int = 1
+    /// 0 ظل، 1 صندوق، 2 بدون خلفية
+    var style: Int = 0
+
+    private var font: Font {
+        let w: Typo.Weight = weight == 0 ? .regular : (weight == 2 ? .bold : .semibold)
+        return Typo.font(w, 19 * scale, .title3)
+    }
 
     var body: some View {
         VStack {
             Spacer()
             if let text {
                 Text(text)
-                    .font(Typo.font(.semibold, 19 * scale, .title3))
+                    .font(font)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.9), radius: 2, x: 0, y: 1)
-                    .padding(.horizontal, background ? 12 : 0)
-                    .padding(.vertical, background ? 6 : 0)
+                    // الظل يشتغل مع أي صورة: يخلي النص مقروء بدون صندوق يقطع الصورة
+                    .shadow(color: style == 0 ? .black.opacity(0.92) : .clear, radius: style == 0 ? 3 : 0, x: 0, y: style == 0 ? 1 : 0)
+                    .padding(.horizontal, style == 1 ? 12 : 0)
+                    .padding(.vertical, style == 1 ? 6 : 0)
                     .background {
-                        if background { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.black.opacity(0.55)) }
+                        if style == 1 {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.black.opacity(0.58))
+                        }
                     }
                     .padding(.horizontal, 28)
             }

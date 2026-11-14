@@ -197,5 +197,21 @@
   "الرابط انتهى": "The link expired",
   "هذا مو رابط إضافة Stremio. لازم يكون رابط إضافة ينتهي بـ %@ أو يبدأ بـ %@": "This isn't a Stremio add-on link. It has to be an add-on link that ends with %@ or starts with %@",
   "ما قدرنا نوصل للرابط. تأكد إنه رابط إضافة Stremio ينتهي بـ %@ أو يبدأ بـ %@ وإن النت شغّال": "We couldn't reach that link. Make sure it's a Stremio add-on link that ends with %@ or starts with %@, and that you're online",
-  "انقطع الاتصال بالمصدر. اضغط تشغيل عشان نكمّل من نفس المكان": "Lost the connection to the source. Tap play to carry on from the same spot."
+  "انقطع الاتصال بالمصدر. اضغط تشغيل عشان نكمّل من نفس المكان": "Lost the connection to the source. Tap play to carry on from the same spot.",
+  "الحجم": "Size",
+  "الخلفية": "Background",
+  "المعاينة فوق حية: الترجمة على الفيديو تتغيّر وأنت تعدّل.": "The preview above is live: the subtitle on the video changes as you adjust.",
+  "المكان": "Position",
+  "الوزن": "Weight",
+  "بدون": "None",
+  "رجّع الشكل الافتراضي": "Reset to default look",
+  "سميك": "Semibold",
+  "شكل الترجمة": "Subtitle look",
+  "صندوق": "Box",
+  "ظل": "Shadow",
+  "عريض": "Bold",
+  "ما عاد فيه وقت نضيّعه.": "There is no time left to waste.",
+  "مرتفع": "High",
+  "منخفض": "Low",
+  "وسط": "Middle"
 }

@@ -629,6 +629,13 @@ final class PlayerModel {
         start(source, startAt: resumePoint, forceVLC: source.engine == .vlc || engineName == "VLC")
     }
 
+    /// صورة من الفيديو عند ثانية معيّنة، لمعاينة السحب. nil = المشغّل ما يقدر يعطيها (نعرض الغلاف)
+    func previewFrame(at seconds: Double) async -> UIImage? {
+        guard let engine, !isReloading else { return nil }
+        if case .failed = state { return nil }
+        return await engine.frameImage(at: seconds)
+    }
+
     // MARK: - إعادة التحميل والاستعادة (زر التحديث، الرجوع من الخلفية، انقطاع مصدر كان شغّال)
 
     /// وش كان مختار قبل إعادة التحميل، نرجّعه أول ما تجهز المسارات بالمشغّل الجديد
