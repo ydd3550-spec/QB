@@ -1181,22 +1181,27 @@ final class PlayerModel {
         let playing = engine.state == .playing && !engine.isBuffering && pendingRestore == nil && !isReloading
         let verdict = frameWatch.observe(frames: frames, time: engine.elapsed, playing: playing, now: now)
         if Date().timeIntervalSince(frameRecoveredAt) > 60 { frameRecoveries = 0 }
-        guard verdict == .frozen, Date().timeIntervalSince(frameRecoveredAt) > 6 else { return }
+        guard verdict == .frozen, Date().timeIntervalSince(frameRecoveredAt) > PictureRecovery.backoff(attempt: frameRecoveries + 1) else { return }
         frameRecoveredAt = Date()
         frameRecoveries += 1
-        let at = max(frameWatch.frameTime, 0)
+        let at = frameWatch.frameTime > 1 ? frameWatch.frameTime : max(resumePoint, 0)
         coreLog.info("player picture frozen at \(at) (time \(engine.elapsed)), recovery \(self.frameRecoveries)")
         frameWatch.reset()
-        if frameRecoveries == 1 {
-            // أول مرة: نرجّع الصورة بمكانها (نربط مخرج الصورة من جديد ونقدّم لآخر إطار عشان الصوت والصورة يتزامنون)
+        // الأخف أول: نرجّع مخرج الصورة على نفس الاتصال ونفس الثانية (بدون ما نعيد الترجمة ولا نلمس المكان).
+        // إعادة المصدر كامل آخر حل، وبعدها رسالة — بدل ما نبدّل بينهم من أول مرة.
+        switch PictureRecovery.step(attempt: frameRecoveries) {
+        case .restartOutput:
             engine.recoverPicture(at: at)
-            resume.userSeek(to: at, now: now)
             elapsed = at
-        } else {
-            // ما نفع: نفتح نفس المصدر من آخر إطار انعرض
+        case .reopen:
             resume.userSeek(to: at, now: now)
             recoveryAttempts = 0
             recoverSource(reason: "frozen picture", keepPaused: false)
+        case .giveUp:
+            resume.userSeek(to: at, now: now)
+            if errorMessage == nil {
+                fail(L("انقطع الاتصال بالمصدر. اضغط تشغيل عشان نكمّل من نفس المكان"))
+            }
         }
     }
 
