@@ -100,7 +100,7 @@ struct PlayerHost: View {
                 // الترجمة تلحق الصورة نفسها: بالطول تحت الفيديو اللي بالنص، وبالعرض أو بعد التكبير فوق حافة الشاشة
                 let subs = PlayerLogic.subtitlePlacement(
                     screen: screen, video: player.videoSize, fill: player.videoFill,
-                    safeBottom: geo.safeAreaInsets.bottom, controlsVisible: controlsVisible)
+                    safeBottom: stableSafeBottom(geo, screen: screen), controlsVisible: controlsVisible)
                 SubtitleOverlay(text: player.cueText, scale: app.subtitleSize * Double(subs.scale), background: app.subtitleBackground)
                     .padding(.horizontal, max(geo.safeAreaInsets.leading, geo.safeAreaInsets.trailing))
                     .padding(.bottom, subs.bottom)
@@ -369,13 +369,17 @@ struct PlayerHost: View {
                                 // نكمّل الحركة لتحت بنفس سرعة إصبعك لين تطلع من الشاشة، وبعدين نشيلها بدون حركة ثانية
                                 cardReturn.stop()
                                 leaving = true
-                                let remaining = max(1, DismissCard.offscreen(size) - dragOffset)
                                 let velocity = max(0, (v.predictedEndTranslation.height - v.translation.height) * 4)
-                                let spring = Animation.interpolatingSpring(mass: 1, stiffness: 260, damping: 32,
-                                                                           initialVelocity: Double(velocity / remaining))
                                 // بالعرض الشاشة لازم تلف للطول قبل ما تنقفل: نخفي البطاقة كلها أول عشان اللفّة ما تبان عليها
                                 let landscape = size.width > size.height
-                                withAnimation(spring) { dragOffset = DismissCard.offscreen(size) }
+                                // نفس محرّك الإطارات اللي يرجّع البطاقة: كل إطار قيمة وحدة بدون حركة SwiftUI،
+                                // فالصورة وطبقتها والقص يتحدّثون مع بعض بنفس الإطار (ما فيه حركة UIKit تتسابق معها)
+                                cardReturn.start(offset: dragOffset, x: dragX, velocity: velocity,
+                                                 target: DismissCard.offscreen(size)) { y, x in
+                                    var t = Transaction()
+                                    t.disablesAnimations = true
+                                    withTransaction(t) { dragOffset = y; dragX = x }
+                                } done: {}
                                 withAnimation(.easeIn(duration: landscape ? 0.2 : 0.28)) { dismissFade = true }
                                 Task {
                                     try? await Task.sleep(for: .milliseconds(landscape ? 220 : 300))
@@ -408,6 +412,18 @@ struct PlayerHost: View {
 
     /// منطقة شريط الرئيسية تحت: أي سحب يبدأ فيها نخليه للنظام
     static let homeIndicatorZone: CGFloat = 30
+
+    /// الحافة الآمنة تحت للترجمة: حافة النافذة نفسها، مو حافة المنظر اللي تتغيّر وقت الدوران والرجوع من الخلفية
+    /// والسحب لتحت (كانت تصير صفر لحظات فتنزل الترجمة لتحت)
+    private func stableSafeBottom(_ geo: GeometryProxy, screen: CGSize) -> CGFloat {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        let fromWindow = window.map { w in
+            // النافذة بنفس اتجاه الشاشة الحالي بس
+            (w.bounds.width > w.bounds.height) == (screen.width > screen.height) ? w.safeAreaInsets.bottom : 0
+        } ?? 0
+        return max(geo.safeAreaInsets.bottom, fromWindow)
+    }
 
     /// مقاس الشاشة كامل مع الحواف الآمنة (الفيديو يغطيها كلها)
     private func fullScreenSize(_ geo: GeometryProxy) -> CGSize {
@@ -1344,26 +1360,36 @@ final class CardReturnDriver: NSObject {
     private var y0: CGFloat = 0
     private var x0: CGFloat = 0
     private var v0: CGFloat = 0
+    /// وين توقف (0 = مكانها، أو تحت برا الشاشة وقت الخروج)
+    private var target: CGFloat = 0
     private var onFrame: ((CGFloat, CGFloat) -> Void)?
     private var onDone: (() -> Void)?
 
     var isRunning: Bool { link != nil }
 
     /// velocity بالنقاط بالثانية (موجب = لتحت، بعيد عن المكان)
-    func start(offset: CGFloat, x: CGFloat, velocity: CGFloat,
+    func start(offset: CGFloat, x: CGFloat, velocity: CGFloat, target: CGFloat = 0,
                frame: @escaping (CGFloat, CGFloat) -> Void, done: @escaping () -> Void) {
         stop()
         let y = max(0, offset)
-        guard y > 0.5 else {
-            frame(0, 0)
+        self.target = target
+        guard abs(y - target) > 0.5 else {
+            frame(target, target == 0 ? 0 : x)
             done()
             return
         }
-        y0 = y
+        // نحسب على المسافة الباقية للهدف
+        y0 = y - target
         x0 = x
         let w = Self.omega
-        // لفوق (سالب) بحد أقصى ωy0 عشان ما تعدّي الصفر، ولتحت بحد معقول عشان ما تنزل كثير قبل ما ترجع
-        v0 = min(max(velocity.isFinite ? velocity : 0, -w * y), 1600)
+        let v = velocity.isFinite ? velocity : 0
+        if target == 0 {
+            // لفوق (سالب) بحد أقصى ωy0 عشان ما تعدّي الصفر، ولتحت بحد معقول عشان ما تنزل كثير قبل ما ترجع
+            v0 = min(max(v, -w * y), 1600)
+        } else {
+            // الخروج لتحت: بسرعة إصبعك، بدون ما تعدّي الهدف
+            v0 = min(max(v, 0), -w * y0)
+        }
         onFrame = frame
         onDone = done
         startTime = nil
@@ -1387,8 +1413,21 @@ final class CardReturnDriver: NSObject {
         let w = Self.omega
         let b = v0 + w * y0
         let e = CGFloat(exp(Double(-w * t)))
-        let y = max(0, (y0 + b * t) * e)
+        let d = (y0 + b * t) * e
         let vy = (v0 - w * b * t) * e
+        if target != 0 {
+            // الخروج: اليمين واليسار يبقون مثل ما هم
+            if t > 0.05, abs(d) < 0.35, abs(vy) < 12 {
+                let finish = onDone
+                onFrame?(target, x0)
+                stop()
+                finish?()
+                return
+            }
+            onFrame?(min(target, target + d), x0)
+            return
+        }
+        let y = max(0, d)
         if t > 0.05, y < 0.35, abs(vy) < 12 {
             let finish = onDone
             onFrame?(0, 0)

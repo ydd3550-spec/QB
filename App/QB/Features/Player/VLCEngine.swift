@@ -232,7 +232,8 @@ final class VLCEngine: PlaybackEngine {
         let media = VLCMedia(url: url)
         for option in VLCHeaderOptions.options(for: headers) { media.addOption(option) }
         if startAt > 1 { media.addOption(":start-time=\(Int(startAt))") }
-        media.addOption(":network-caching=3000")
+        // شبكة ضعيفة: مخزون أكبر، فيصبر على الانقطاعات القصيرة بدل ما يوقف
+        media.addOption(":network-caching=5000")
         // الاتصال ينقطع (رجوع من الخلفية، تبديل شبكة): يتصل من جديد بدل ما يوقف للأبد
         media.addOption(":http-reconnect")
         // Hardware decoding (VideoToolbox) first, software only if the codec isn't supported by the hardware
@@ -339,10 +340,10 @@ final class VLCEngine: PlaybackEngine {
     }
 
     /// آخر حل: نفتح نفس المصدر من جديد من نفس الثانية، بدون رسالة
-    private func reopen() {
+    private func reopen(at position: Double? = nil) {
         guard let url = sourceURL, !reopening, !shutDown, !finished else { return }
         reopening = true
-        let at = elapsed
+        let at = position ?? elapsed
         let media = makeMedia(url: url, headers: sourceHeaders, startAt: at)
         let box = UncheckedBox(player)
         commands.async {
@@ -390,7 +391,11 @@ final class VLCEngine: PlaybackEngine {
             lastPictures = pictures
             picturesAt = now
             frameTime = elapsed
-            recoveryStage = 0
+            // الصورة رجعت تمشي من دقيقة: نرجّع عدّاد الاستعادات (قبل كان 3 مرات بس لكل فتحة، وبعدها تبقى الصورة واقفة للأبد)
+            if now.timeIntervalSince(lastRecoveryAt) > 60 {
+                recoveries = 0
+                recoveryStage = 0
+            }
         }
         if buffers != lastAudioBuffers {
             if buffers > 0 { everAudio = true }
@@ -406,20 +411,32 @@ final class VLCEngine: PlaybackEngine {
         lastRecoveryAt = now
         recoveries += 1
         recoveryStage += 1
+        // الصورة توقف والصوت يكمّل بعد التعليق: مفكّك الصورة يرمي كل إطار لأنه "متأخر" عن ساعة الصوت.
+        // نرجع لآخر إطار انعرض: هذا يفرّغ المفكّك ويزامن الصورة والصوت والترجمة من نفس المكان
+        let lastFrame = max(0, min(elapsed, frameTime))
         if recoveryStage == 1 {
-            if videoDead { restartVideoOutput() }
+            if videoDead {
+                restartVideoOutput()
+                if player.isSeekable, lastFrame > 1 { seek(to: lastFrame) }
+            }
             if audioDead { restartAudioOutput() }
             picturesAt = now
             audioAt = now
         } else {
             recoveryStage = 0
-            reopen()
+            reopen(at: videoDead ? lastFrame : nil)
         }
+    }
+
+    /// البيانات اللي وصلت من الشبكة: للتعليق، ننتظر طول ما فيه بيانات توصل
+    var bytesReceived: Int64? {
+        guard let media = player.media else { return nil }
+        return Int64(media.numberOfReadBytesOnInput)
     }
 
     /// الصورة واقفة والوقت يمشي
     private var pictureFrozen: Bool {
-        everPictures && parkedVideoTrack == nil && Date().timeIntervalSince(picturesAt) > 2.5
+        everPictures && parkedVideoTrack == nil && Date().timeIntervalSince(picturesAt) > 1.5
     }
 
     /// ملء الشاشة: VLC يقص الصورة على نسبة الشاشة نفسها، فتملّيها بدون ما تتمطّط

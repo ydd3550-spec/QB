@@ -56,6 +56,19 @@ final class PlayerModel {
     private(set) var source: RankedSource?
     private(set) var state: PlaybackState = .idle
     private(set) var elapsed: Double = 0
+    /// آخر مكان صحيح وصله التشغيل (PlaybackRecovery.swift): ما يرجع للصفر بتعليق ولا خطأ ولا مشغّل جديد لسا يحمّل.
+    /// كل استعادة وتحديث ورابط جديد ومصدر ثاني ورجوع للتطبيق تبدأ منه، وهو اللي ينحفظ بالتقدّم
+    @ObservationIgnored private var resume = ResumeTracker()
+    var resumePoint: Double { resume.position }
+    /// الصورة واقفة والوقت ماشي (الترجمة والصوت يكمّلون)
+    @ObservationIgnored private var frameWatch = FrameWatch()
+    @ObservationIgnored private var frameRecoveries = 0
+    @ObservationIgnored private var frameRecoveredAt = Date.distantPast
+    /// آخر مرة وصلت بيانات جديدة من الشبكة (للتعليق: ننتظر طول ما فيه بيانات توصل)
+    @ObservationIgnored private var lastBytes: Int64 = -1
+    @ObservationIgnored private var bytesAt = Date()
+    /// كم مرة قال المشغّل "خلص" وهو بالنص (انقطاع)
+    @ObservationIgnored private var earlyEnds = 0
     private(set) var duration: Double?
     private(set) var isBuffering = false
     /// بث مباشر فعلًا (حسب المشغّل)، مو بس مدة ما وصلت
@@ -159,6 +172,13 @@ final class PlayerModel {
         }
         let resume = startAt ?? resumePosition(for: context)
         resumedFrom = (startAt == nil && resume > 1) ? resume : nil
+        if changedTitle {
+            self.resume.reset(to: resume)
+            earlyEnds = 0
+            videoSize = .zero
+        } else if abs(resume - self.resume.position) > 0.5 {
+            self.resume.reset(to: resume)
+        }
         start(source, startAt: resume, forceVLC: false)
         miniHidden = false
         isPresented = true
@@ -181,11 +201,16 @@ final class PlayerModel {
         showTryAnother = false
         reportedOk = false
         loadingSince = Date()
+        // مشغّل جديد: لو هو استكمال لنفس المكان نكمّل نفس المتتبّع، وإلا (اختيار مكان ثاني) نبدأ منه
+        if abs(startAt - resume.position) < 0.5 { resume.engineRestarted() } else { resume.reset(to: startAt) }
+        frameWatch.reset()
+        lastBytes = -1
+        bytesAt = Date()
         elapsed = startAt
         duration = nil
         isLive = false
-        // وقت الاستعادة نخلي مقاس الفيديو مثل ما هو، عشان التكبير ما يرجع للأصلي ويكبر من جديد
-        if pendingRestore == nil { videoSize = .zero }
+        // مقاس الفيديو يبقى مثل ما هو لين المشغّل الجديد يعرف مقاسه (ينصفّر بس مع فيلم أو حلقة جديدة):
+        // المقاس الصفري كان ينزّل الترجمة لتحت الشاشة ويرجّع التكبير للأصلي بعد كل استعادة
         audioTracks = []
         embeddedSubtitles = []
         selectedAudio = nil
@@ -398,7 +423,7 @@ final class PlayerModel {
         pendingVLCSubtitle = subtitle
         manualNative = nil
         triedSources.remove(source.id)
-        start(source, startAt: elapsed, forceVLC: true)
+        start(source, startAt: resumePoint, forceVLC: true)
     }
 
     private func makeNative() -> NativeEngine {
@@ -445,7 +470,7 @@ final class PlayerModel {
 
     private func handle(_ failure: EngineFailure) {
         guard let source else { return }
-        let position = elapsed
+        let position = resumePoint
         noteFailure(failure, source: source, position: position)
         var isDrop = true
         if case .nativeCannotPlay = failure { isDrop = reportedOk }
@@ -588,20 +613,20 @@ final class PlayerModel {
             return
         }
         mergeSourceSubtitles(next)
-        start(next, startAt: elapsed, forceVLC: false)
+        start(next, startAt: resumePoint, forceVLC: false)
     }
 
     /// اختيار مصدر من داخل المشغّل
     func switchSource(_ s: RankedSource) {
         guard s.id != source?.id else { return }
         mergeSourceSubtitles(s)
-        start(s, startAt: elapsed, forceVLC: false)
+        start(s, startAt: resumePoint, forceVLC: false)
     }
 
     func retry() {
         guard let source else { return }
         triedSources.remove(source.id)
-        start(source, startAt: elapsed, forceVLC: source.engine == .vlc || engineName == "VLC")
+        start(source, startAt: resumePoint, forceVLC: source.engine == .vlc || engineName == "VLC")
     }
 
     // MARK: - إعادة التحميل والاستعادة (زر التحديث، الرجوع من الخلفية، انقطاع مصدر كان شغّال)
@@ -641,7 +666,7 @@ final class PlayerModel {
     /// من جديد بهدوء ونكمّل بنفس المصدر برابطه الجديد. ما تطلع رسالة "ما فيه مصدر" إلا لو فعلًا ما فيه شي يشتغل
     private func recoverSource(reason: String, keepPaused: Bool) {
         guard let source else { return }
-        let position = max(0, elapsed)
+        let position = resumePoint
         recoveryAttempts += 1
         lastRecoveryAt = Date()
         isReloading = true
@@ -798,14 +823,14 @@ final class PlayerModel {
         guard native != isNative || errorMessage != nil else { return }
         triedSources.remove(source.id)
         if !native { try? core?.markSourceFailed(sourceId: source.id, nativeFailed: true) }
-        start(source, startAt: elapsed, forceVLC: !native, forceNative: native)
+        start(source, startAt: resumePoint, forceVLC: !native, forceNative: native)
     }
 
     /// يجبر VLC للمصدر الحالي (من قائمة المشغّل)
     func reopenInVLC() {
         guard let source, engineName != "VLC" else { return }
         try? core?.markSourceFailed(sourceId: source.id, nativeFailed: true)
-        start(source, startAt: elapsed, forceVLC: true)
+        start(source, startAt: resumePoint, forceVLC: true)
     }
 
     // MARK: - التحكم
@@ -847,6 +872,8 @@ final class PlayerModel {
         var t = max(0, seconds)
         if let d = duration, d > 0 { t = min(t, d - 1) }
         engine.seek(to: t)
+        resume.userSeek(to: t, now: Self.clock)
+        frameWatch.reset()
         elapsed = t
         updateCue()
     }
@@ -1076,10 +1103,24 @@ final class PlayerModel {
 
     private func sync() {
         guard let engine else { return }
-        if elapsed != engine.elapsed { elapsed = engine.elapsed }
+        let now = Self.clock
+        // الوقت المعروض والمحفوظ من المتتبّع: المشغّل اللي يبلّغ صفر وهو يحمّل أو يعلّق أو يخرب ما يرجّعه لورا
+        let advancing = engine.state == .playing && !engine.isBuffering
+        let reading = engine.isLive ? ResumeTracker.Reading(display: engine.elapsed) : resume.observe(engine.elapsed, playing: advancing, now: now)
+        if let back = reading.correctTo {
+            // المشغّل رجع يشتغل من البداية لحاله (خادم التحويل أو VLC ابتدا من الصفر): نرجّعه لمكانه
+            coreLog.info("player restarted from \(engine.elapsed) by itself, back to \(back)")
+            engine.seek(to: back)
+        }
+        if elapsed != reading.display { elapsed = reading.display }
         if duration != engine.duration { duration = engine.duration }
         if isLive != engine.isLive { isLive = engine.isLive }
-        if videoSize != engine.videoSize { videoSize = engine.videoSize }
+        let size = StickyVideoSize.merge(current: (Double(videoSize.width), Double(videoSize.height)),
+                                         reported: (Double(engine.videoSize.width), Double(engine.videoSize.height)))
+        let stickySize = CGSize(width: size.w, height: size.h)
+        if videoSize != stickySize { videoSize = stickySize }
+        watchNetwork(engine)
+        watchFrames(engine, now: now)
         if isBuffering != engine.isBuffering { isBuffering = engine.isBuffering }
         if state != engine.state, engine.state != .idle { state = engine.state }
         updateCue()
@@ -1112,11 +1153,49 @@ final class PlayerModel {
         guard stuck else { stalledSince = nil; return }
         if stalledSince == nil { stalledSince = Date() }
         let justBack = backgroundedAt == nil && lastForeground.map { Date().timeIntervalSince($0) < 20 } == true
-        let limit: Double = justBack ? 6 : 20
-        if let since = stalledSince, Date().timeIntervalSince(since) > limit, recoveryAttempts < 2 {
+        let stalled = stalledSince.map { Date().timeIntervalSince($0) } ?? 0
+        // شبكة ضعيفة: طول ما البيانات توصل ننتظر والمؤشر يدور، وما نعيد التحميل إلا لما الشبكة تسكت فعلًا
+        let quiet: Double? = lastBytes >= 0 ? Date().timeIntervalSince(bytesAt) : nil
+        if StallPolicy.shouldReload(stalled: stalled, quiet: quiet, justReturned: justBack), recoveryAttempts < 3 {
             recoverSource(reason: "stall", keepPaused: false)
         }
     }
+
+    /// البيانات اللي توصل من الشبكة (لو المشغّل يعطيها)
+    private func watchNetwork(_ engine: any PlaybackEngine) {
+        guard let bytes = engine.bytesReceived else { return }
+        if bytes != lastBytes {
+            lastBytes = bytes
+            bytesAt = Date()
+        }
+    }
+
+    /// الصورة واقفة والوقت ماشي: الترجمة توقف عند آخر إطار، وبعدها نستعيد من آخر إطار انعرض، مو من الصفر
+    private func watchFrames(_ engine: any PlaybackEngine, now: TimeInterval) {
+        guard let frames = engine.framesShown else { return }
+        let playing = engine.state == .playing && !engine.isBuffering && pendingRestore == nil && !isReloading
+        let verdict = frameWatch.observe(frames: frames, time: engine.elapsed, playing: playing, now: now)
+        if Date().timeIntervalSince(frameRecoveredAt) > 60 { frameRecoveries = 0 }
+        guard verdict == .frozen, Date().timeIntervalSince(frameRecoveredAt) > 6 else { return }
+        frameRecoveredAt = Date()
+        frameRecoveries += 1
+        let at = max(frameWatch.frameTime, 0)
+        coreLog.info("player picture frozen at \(at) (time \(engine.elapsed)), recovery \(self.frameRecoveries)")
+        frameWatch.reset()
+        if frameRecoveries == 1 {
+            // أول مرة: نرجّع الصورة بمكانها (نربط مخرج الصورة من جديد ونقدّم لآخر إطار عشان الصوت والصورة يتزامنون)
+            engine.recoverPicture(at: at)
+            resume.userSeek(to: at, now: now)
+            elapsed = at
+        } else {
+            // ما نفع: نفتح نفس المصدر من آخر إطار انعرض
+            resume.userSeek(to: at, now: now)
+            recoveryAttempts = 0
+            recoverSource(reason: "frozen picture", keepPaused: false)
+        }
+    }
+
+    static var clock: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
     private var lastForeground: Date?
 
@@ -1132,6 +1211,21 @@ final class PlayerModel {
             saveProgress(force: true)
             if pendingRestore != nil { finishRestoreIfDone() }
         case .ended:
+            // VLC مع بث من النت يقول "خلص" لما تنقطع الشبكة وهو بالنص. كان هذا يمسح مكان المشاهدة،
+            // وزر التشغيل بعدها يعيد الفيلم من البداية. نفرّق: نهاية فعلية، ولا انقطاع نستعيده من نفس المكان
+            let total = duration ?? lastKnownDuration ?? Self.runtimeSeconds(context?.meta?.runtime) ?? 0
+            if !isLive, !PlaybackEnd.isReal(position: resumePoint, duration: total) {
+                earlyEnds += 1
+                coreLog.info("player ended early at \(self.resumePoint) of \(total), recovering")
+                saveProgress(force: true)
+                if earlyEnds <= 4 {
+                    recoveryAttempts = min(recoveryAttempts, 1)
+                    recoverSource(reason: "early end", keepPaused: false)
+                } else {
+                    fail(L("انقطع الاتصال بالمصدر. اضغط تشغيل عشان نكمّل من نفس المكان"))
+                }
+                return
+            }
             finished()
         default:
             break
@@ -1180,9 +1274,10 @@ final class PlayerModel {
     private func saveProgress(force: Bool) {
         guard let context, let core, reportedOk || force else { return }
         guard force || Date().timeIntervalSince(lastSave) >= 10 else { return }
-        guard elapsed > 10 else { return }
+        let position = resumePoint
+        guard position > 10 else { return }
         lastSave = Date()
-        if let d = duration, d > 0, elapsed / d > 0.95 {
+        if let d = duration, d > 0, position / d > 0.95 {
             try? core.removeProgress(mediaId: context.ref.id)
             return
         }
@@ -1192,7 +1287,7 @@ final class PlayerModel {
             ?? Self.runtimeSeconds(context.meta?.runtime)
         if let knownDuration { lastKnownDuration = knownDuration }
         let p = WatchProgress(mediaId: context.ref.id, episodeId: context.video?.id, kind: context.ref.kind, title: context.title,
-                              poster: context.meta?.poster ?? context.ref.poster, positionS: elapsed, durationS: knownDuration, updatedAt: CoreClient.now)
+                              poster: context.meta?.poster ?? context.ref.poster, positionS: position, durationS: knownDuration, updatedAt: CoreClient.now)
         try? core.saveProgress(progress: p)
         if force { app?.refreshContinueWatching() }
     }
@@ -1239,6 +1334,8 @@ final class PlayerModel {
         stopEngine()
         nextUp = nil
         elapsed = 0
+        resume.reset(to: 0)
+        earlyEnds = 0
         duration = nil
         isLive = false
         videoSize = .zero
@@ -1461,7 +1558,13 @@ final class PlayerModel {
 
     /// Subtitles follow the player's live clock (not the last 250 ms poll), with the user's sync offset kept
     private func updateCue() {
-        let now = engine?.liveTime ?? elapsed
+        var now = engine?.liveTime ?? elapsed
+        // مشغّل جديد لسا يحمّل يبلّغ صفر: الترجمة تبقى على المكان المحفوظ، ما تقفز لأول جملة بالفيلم
+        if isReloading || pendingRestore != nil || abs(now - elapsed) > 6 { now = elapsed }
+        // الترجمة تتبع الصورة: لو الإطارات وقفت، توقف عند وقت آخر إطار انعرض
+        if frameWatch.everFrames, frameWatch.lagging, engine?.state == .playing, now - frameWatch.frameTime > FrameWatch.lagAfter {
+            now = frameWatch.frameTime
+        }
         let text = CueIndex.text(in: cues, at: now.isFinite ? now : elapsed, offset: subtitleOffset)
         if text != cueText { cueText = text }
     }

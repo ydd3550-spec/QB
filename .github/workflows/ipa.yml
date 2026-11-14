@@ -37,6 +37,11 @@ jobs:
           xcrun swiftc App/QB/Features/Player/SeekGuard.swift scripts/seekguard-test/main.swift -o "$RUNNER_TEMP/seekguard"
           "$RUNNER_TEMP/seekguard"
 
+      - name: Recovery test (stall, network drop, new URL, remux restart, VLC rebuild, frozen picture, subtitles)
+        run: |
+          xcrun swiftc App/QB/Features/Player/PlaybackRecovery.swift scripts/recovery-test/main.swift -o "$RUNNER_TEMP/recovery"
+          "$RUNNER_TEMP/recovery"
+
       - name: Install Rust + iOS target
         run: |
           command -v rustup >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal

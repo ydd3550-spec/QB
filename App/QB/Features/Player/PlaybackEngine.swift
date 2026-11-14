@@ -84,6 +84,19 @@ protocol PlaybackEngine: AnyObject {
     /// يرجّع الفيديو من الصورة للمشغّل
     func stopPiP()
     func setAutoPiP(_ on: Bool)
+
+    /// كم بايت وصل من الشبكة لين الحين (nil = ما نعرف). للتعليق: ننتظر طول ما فيه بيانات توصل
+    var bytesReceived: Int64? { get }
+    /// عدّاد يزيد مع كل إطار ينعرض (nil = ما نعرف). للصورة الواقفة والوقت ماشي
+    var framesShown: Int? { get }
+    /// الصورة واقفة: نربط مخرج الصورة من جديد ونرجع لآخر إطار انعرض، بدون ما نوقف المشغّل
+    func recoverPicture(at seconds: Double)
+}
+
+extension PlaybackEngine {
+    var bytesReceived: Int64? { nil }
+    var framesShown: Int? { nil }
+    func recoverPicture(at seconds: Double) { seek(to: seconds); refreshLayout() }
 }
 
 /// يركّب منظر المشغّل داخل أي مكان (المشغّل الكامل أو المصغّر).
@@ -101,6 +114,17 @@ final class SurfaceHostView: UIView {
     var zoom: CGFloat = 1 {
         didSet { if zoom != oldValue { applyZoom() } }
     }
+
+    /// زوايا البطاقة (بمقاس الشاشة الكاملة)
+    var cardCorner: CGFloat = 0 {
+        didSet { if cardCorner != oldValue { applyZoom() } }
+    }
+
+    /// مقاس الشاشة الكامل اللي تنرسم عليه الصورة. وقت السحب لتحت لو صغّر SwiftUI مقاس هذا المنظر نفسه
+    /// (بدل ما يحرّكه بتحويل)، كان منظر المشغّل يتغيّر مقاسه كل إطار، وAVPlayerLayer وVLC يعيدون حساب مكان
+    /// الصورة بعده بإطار أو أكثر، فتتحرك الصورة داخل البطاقة لحالها. الحين منظر المشغّل يبقى بنفس المقاس دايمًا،
+    /// ويصغر بتحويل رسم بس بنفس النسبة وبنفس الإطار، فالصورة قطعة وحدة مع البطاقة
+    private var baseSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -131,16 +155,42 @@ final class SurfaceHostView: UIView {
         applyZoom()
     }
 
+    /// نفس الشكل وأصغر (تصغير البطاقة)، ولا مقاس جديد فعلًا (دوران، مصغّر، أول مرة)؟
+    private func updateBase() {
+        let b = bounds.size
+        guard b.width > 1, b.height > 1 else { return }
+        let base = baseSize
+        if base.width < 1 || b.width > base.width + 0.5 || b.height > base.height + 0.5 {
+            baseSize = b
+            return
+        }
+        let sameShape = abs(b.width / b.height - base.width / base.height) < 0.01 * (base.width / base.height)
+        if !sameShape { baseSize = b }
+    }
+
+    /// كم مصغّر هذا المنظر عن مقاس الشاشة الكامل (1 = مو مصغّر)
+    private var cardScale: CGFloat {
+        guard baseSize.width > 1 else { return 1 }
+        return min(1, bounds.width / baseSize.width)
+    }
+
     /// بالمقاس والنص بس (مو frame): الـ frame مع تحويل غير الأصلي يخرب الحساب
     private func place(_ surface: UIView) {
-        if surface.bounds.size != bounds.size { surface.bounds = CGRect(origin: .zero, size: bounds.size) }
+        updateBase()
+        let size = baseSize.width > 1 ? baseSize : bounds.size
+        if surface.bounds.size != size { surface.bounds = CGRect(origin: .zero, size: size) }
         let c = CGPoint(x: bounds.midX, y: bounds.midY)
         if surface.center != c { surface.center = c }
     }
 
     private func applyZoom() {
+        let s = cardScale
+        // الزوايا بنفس تصغير البطاقة، فتطابق زوايا قناع SwiftUI بالضبط
+        let corner = cardCorner * s
+        if layer.cornerRadius != corner { layer.cornerRadius = corner }
         guard let surface, surface.superview === self else { return }
-        let t = zoom == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: zoom, y: zoom)
+        let k = zoom * s
+        let t = k == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: k, y: k)
         if surface.transform != t { surface.transform = t }
     }
 
@@ -172,24 +222,24 @@ struct EngineSurface: UIViewRepresentable {
         let v = SurfaceHostView()
         v.surface = surface
         v.zoom = zoom
-        v.layer.cornerRadius = cornerRadius
+        v.cardCorner = cornerRadius
         return v
     }
 
     func updateUIView(_ uiView: SurfaceHostView, context: Context) {
         if uiView.surface !== surface { uiView.surface = surface }
         if uiView.isHidden != hidden { uiView.isHidden = hidden }
-        let changes = uiView.zoom != zoom || uiView.layer.cornerRadius != cornerRadius
-        guard changes else { return }
-        let apply = {
-            uiView.zoom = zoom
-            uiView.layer.cornerRadius = cornerRadius
+        // الزوايا تتبع السحب إطار بإطار وبدون حركة UIKit خاصة فيها: حركة UIKit على طبقة الفيديو كانت
+        // تمشي بتوقيت غير توقيت البطاقة، فتطلع الصورة متحركة داخلها
+        if uiView.cardCorner != cornerRadius {
+            UIView.performWithoutAnimation { uiView.cardCorner = cornerRadius }
         }
+        guard uiView.zoom != zoom else { return }
         if context.transaction.animation != nil, !context.transaction.disablesAnimations {
-            // نفس حركة SwiftUI بالضبط (spring التكبير أو رجوع البطاقة)
-            context.animate(changes: apply)
+            // نفس حركة SwiftUI بالضبط (spring التكبير)
+            context.animate { uiView.zoom = zoom }
         } else {
-            apply()
+            uiView.zoom = zoom
         }
     }
 }
@@ -199,3 +249,4 @@ nonisolated final class UncheckedBox<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
 }
+

@@ -210,8 +210,73 @@ final class NativeEngine: NSObject, PlaybackEngine {
         state = .loading
         isBuffering = true
         wantsPlay = true
-        player.playImmediately(atRate: rate)
+        frameOutput = nil
+        frameCount = 0
+        // استكمال: ما نبدأ التشغيل قبل ما ينزل على مكان الاستكمال. قبل كان يبدأ من الصفر أول ما ينفتح،
+        // وأي شي يقاطع التقديم (تقديم ثاني، انقطاع) كان يخلّيه يكمّل من البداية
+        if startAt <= 1 { player.playImmediately(atRate: rate) }
         startTicking()
+    }
+
+    /// التقديم لمكان الاستكمال. لو انقطع (finished = false) وما فيه تقديم ثاني من المستخدم، نعيده،
+    /// وما نشغّل إلا بعد ما ينزل عليه، فما يبدأ من الصفر أبد
+    private func seekToStart(_ target: Double, attempt: Int) {
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600),
+                    toleranceBefore: CMTime(seconds: 1, preferredTimescale: 600),
+                    toleranceAfter: .zero) { [weak self] finished in
+            Task { @MainActor [weak self] in
+                guard let self, !self.failed, self.startAt == target else { return }
+                // المستخدم قدّم لمكان ثاني وقتها: تقديمه هو اللي يمشي
+                let superseded = self.seekGuard.target.map { abs($0 - target) > 0.001 } ?? false
+                if !finished, !superseded, attempt < 4 {
+                    try? await Task.sleep(for: .milliseconds(400))
+                    self.seekToStart(target, attempt: attempt + 1)
+                    return
+                }
+                if finished { self.seekGuard.confirm(target, now: Self.clock) }
+                // نبدأ عد المراقب من بعد ما يوصل لمكان الاستكمال
+                self.seekingToStart = false
+                self.readyAt = Date()
+                self.lastProgressAt = Date()
+                if self.wantsPlay { self.player.playImmediately(atRate: self.rate) }
+            }
+        }
+    }
+
+    // MARK: - الإطارات المعروضة (للصورة الواقفة والوقت ماشي)
+
+    private var frameOutput: AVPlayerItemVideoOutput?
+    private var frameCount = 0
+
+    var framesShown: Int? {
+        // AirPlay: الصورة بالتلفزيون، فما فيه إطارات هنا
+        guard let item, item.status == .readyToPlay, !player.isExternalPlaybackActive else { return nil }
+        guard view.window != nil, UIApplication.shared.applicationState == .active else { return nil }
+        if frameOutput == nil {
+            guard !item.tracks.isEmpty, item.tracks.contains(where: { $0.assetTrack?.mediaType == .video }) else { return nil }
+            let out = AVPlayerItemVideoOutput(pixelBufferAttributes: nil)
+            out.suppressesPlayerRendering = false
+            item.add(out)
+            frameOutput = out
+            return nil
+        }
+        guard let out = frameOutput else { return nil }
+        let t = out.itemTime(forHostTime: CACurrentMediaTime())
+        if out.hasNewPixelBuffer(forItemTime: t) {
+            _ = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+            frameCount += 1
+        }
+        return frameCount
+    }
+
+    var bytesReceived: Int64? {
+        guard let events = item?.accessLog()?.events, !events.isEmpty else { return nil }
+        return events.reduce(Int64(0)) { $0 + max(0, $1.numberOfBytesTransferred) }
+    }
+
+    func recoverPicture(at seconds: Double) {
+        reattachLayer()
+        seek(to: seconds)
     }
 
     private func startTicking() {
@@ -242,20 +307,7 @@ final class NativeEngine: NSObject, PlaybackEngine {
                 if startAt > 1, !didInitialSeek {
                     didInitialSeek = true
                     seekingToStart = true
-                    let resumeTarget = startAt
-                    player.seek(to: CMTime(seconds: startAt, preferredTimescale: 600),
-                                toleranceBefore: CMTime(seconds: 1, preferredTimescale: 600),
-                                toleranceAfter: CMTime(seconds: 2, preferredTimescale: 600)) { [weak self] finished in
-                        Task { @MainActor [weak self] in
-                            guard let self else { return }
-                            if finished { self.seekGuard.confirm(resumeTarget, now: Self.clock) }
-                            // نبدأ عد المراقب من بعد ما يوصل لمكان الاستكمال
-                            self.seekingToStart = false
-                            self.readyAt = Date()
-                            self.lastProgressAt = Date()
-                            if self.wantsPlay { self.player.playImmediately(atRate: self.rate) }
-                        }
-                    }
+                    seekToStart(startAt, attempt: 1)
                 }
                 loadTracks()
             }
@@ -302,8 +354,14 @@ final class NativeEngine: NSObject, PlaybackEngine {
             isBuffering = false
             state = .playing
         case .paused:
-            isBuffering = false
-            if readyAt != nil { state = .paused }
+            if seekingToStart, wantsPlay {
+                // ينتظر ينزل على مكان الاستكمال قبل ما يشتغل
+                isBuffering = true
+                state = .loading
+            } else {
+                isBuffering = false
+                if readyAt != nil { state = .paused }
+            }
         case .waitingToPlayAtSpecifiedRate:
             isBuffering = true
             state = readyAt == nil ? .loading : .stalled
@@ -377,6 +435,8 @@ final class NativeEngine: NSObject, PlaybackEngine {
     func play() {
         wantsPlay = true
         AudioSessionKeeper.shared.activate()
+        // لسا ما نزل على مكان الاستكمال: يبدأ لحاله أول ما ينزل (مو من الصفر)
+        if startAt > 1, readyAt == nil || seekingToStart { return }
         if state == .ended { seek(to: 0) }
         player.playImmediately(atRate: rate)
         if readyAt != nil { state = .playing }
