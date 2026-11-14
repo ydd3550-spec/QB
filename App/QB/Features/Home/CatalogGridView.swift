@@ -66,8 +66,8 @@ struct PosterGrid: View {
                     PosterCard(item, width: nil)
                         .matchedTransitionSource(id: ref.zoomID, in: namespace)
                 }
-                .buttonStyle(.plain)
-                .contextMenu { MediaContextMenu(ref: ref) }
+                .buttonStyle(.bouncyCard)
+                .contextMenu { MediaContextMenu(ref: ref) } preview: { MediaPreviewCard(ref: ref) }
                 .onAppear {
                     if item.id == items.last?.id { onReachEnd() }
                 }
@@ -96,6 +96,7 @@ struct CatalogGridView: View {
         }
         .qbScreenBackground()
         .navigationTitle(route.title)
+            .qbNavBar()
         .navigationBarTitleDisplayMode(.large)
         .task {
             pager.reset(key: "\(route.addonId)/\(route.catalogId)/\(route.kind.wire)")

@@ -8,23 +8,24 @@ struct RootView: View {
         @Bindable var player = model.player
         TabView(selection: Binding(get: { model.tab }, set: { model.select($0) })) {
             Tab(L("الرئيسية"), systemImage: "house.fill", value: AppTab.home) {
-                HomeView()
+                HomeView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("اكتشف"), systemImage: "square.grid.2x2.fill", value: AppTab.discover) {
-                DiscoverView()
+                DiscoverView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("مكتبتي"), systemImage: "books.vertical.fill", value: AppTab.library) {
-                LibraryView()
+                LibraryView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("الإعدادات"), systemImage: "gearshape.fill", value: AppTab.settings) {
-                SettingsView()
+                SettingsView().miniPlayerInset(model.player.showsMini)
             }
             Tab(L("البحث"), systemImage: "magnifyingglass", value: AppTab.search, role: .search) {
-                SearchView()
+                SearchView().miniPlayerInset(model.player.showsMini)
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .modifier(MiniPlayerAccessory(visible: model.player.showsMini))
+        .modifier(BehindPlayerEffect(player: model.player))
         .fullScreenCover(isPresented: $player.isPresented, onDismiss: { model.player.didDismiss() }) {
             PlayerHost()
                 .environment(model)
@@ -34,11 +35,7 @@ struct RootView: View {
                 .tint(Palette.accent)
         }
         .overlay(alignment: .top) {
-            if let toast = model.toast {
-                ToastView(text: toast)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .allowsHitTesting(false)
-            }
+            ToastHost(toast: model.toast)
         }
         .overlay {
             if let err = model.startupError {
@@ -116,5 +113,41 @@ private struct MiniPlayerAccessory: ViewModifier {
         } else {
             content.tabViewBottomAccessory { MiniPlayerView() }
         }
+    }
+}
+
+
+extension View {
+    /// مسافة تحت آخر المحتوى بقد المشغّل الصغير، عشان آخر سطر ينسحب فوقه وما يتغطّى
+    func miniPlayerInset(_ visible: Bool) -> some View {
+        safeAreaPadding(.bottom, visible ? 64 : 0)
+    }
+}
+
+/// الصفحة اللي ورا المشغّل: معتّمة وهو فوقها، وتنوّر مع ما تسحبه لتحت.
+/// طبقة فوقها بس، فالصفحة ما ينعاد ترتيبها ولا تنبني من جديد
+private struct BehindPlayerEffect: ViewModifier {
+    let player: PlayerModel
+
+    func body(content: Content) -> some View {
+        let p = player.isPresented ? player.dismissProgress : 1
+        // الصفحة اللي ورا تبان كاملة ومعتّمة حول البطاقة (مثل سحب صفحة التفاصيل)
+        content
+            .overlay {
+                GeometryReader { g in
+                    // بالعرض الصفحة اللي ورا مرتّبة للطول أصلًا، فنغطيها بزجاج مموّه بدل ما تبان أزرارها مقصوصة تحت البطاقة
+                    let landscape = g.size.width > g.size.height
+                    ZStack {
+                        if landscape, p < 1 {
+                            Rectangle().fill(.regularMaterial).opacity(1 - p)
+                        }
+                        Color.black.opacity((landscape ? 0.45 : 0.3) * (1 - p))
+                    }
+                    .ignoresSafeArea()
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
+            .animation(Motion.soft, value: player.isPresented)
     }
 }

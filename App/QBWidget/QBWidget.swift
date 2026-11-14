@@ -42,7 +42,10 @@ struct ContinueWidgetView: View {
         Group {
             if items.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("QB").font(.system(.headline, design: .rounded).weight(.heavy)).foregroundStyle(gold)
+                    HStack(spacing: 6) {
+                        WidgetLogoMark(size: 22)
+                        Text("QB").font(.system(.headline, design: .rounded).weight(.heavy)).foregroundStyle(gold)
+                    }
                     Spacer()
                     Text(WText.empty(lang)).font(.footnote).foregroundStyle(.secondary)
                 }
@@ -53,7 +56,10 @@ struct ContinueWidgetView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(WText.title(lang)).font(.caption.weight(.bold)).foregroundStyle(gold)
+                    HStack(spacing: 5) {
+                        WidgetLogoMark(size: 15)
+                        Text(WText.title(lang)).font(.caption.weight(.bold)).foregroundStyle(gold)
+                    }
                     HStack(spacing: 10) {
                         ForEach(items.prefix(3), id: \.self) { item in
                             Link(destination: WidgetShared.deepLink(item) ?? URL(string: "qb://")!) {
@@ -100,7 +106,7 @@ private struct ItemTile: View {
         } else {
             ZStack {
                 Color.white.opacity(0.06)
-                Image(systemName: "play.rectangle.fill").foregroundStyle(gold)
+                WidgetLogoMark(size: 26)
             }
         }
     }
@@ -121,5 +127,20 @@ struct QBContinueWidget: Widget {
 struct QBWidgetBundle: WidgetBundle {
     var body: some Widget {
         QBContinueWidget()
+    }
+}
+
+
+/// شعار QB الأصلي (QB داخل الأيقونة) بزوايا مدوّرة مثل أيقونة التطبيق
+struct WidgetLogoMark: View {
+    let size: CGFloat
+    var body: some View {
+        Image("WidgetLogo")
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.2237, style: .continuous))
+            .accessibilityHidden(true)
     }
 }

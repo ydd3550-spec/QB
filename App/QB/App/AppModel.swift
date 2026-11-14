@@ -22,6 +22,8 @@ final class AppModel {
     var scrollToTop: [AppTab: Int] = [:]
 
     let player = PlayerModel()
+    /// البحث: كلمته ونتايجه تبقى لين تغيّرها (الرجوع من صفحة فلم ما يعيد البحث)
+    let search = SearchModel()
 
     /// قائمة كمّل المشاهدة (تتحدّث بعد كل حفظ تقدّم)
     var continueWatching: [WatchProgress] = []
@@ -79,6 +81,7 @@ final class AppModel {
         await reloadAddons()
         if seeded > 0 { addonsVersion += 1 }
         ready = true
+        runPendingIntent()
         refreshContinueWatching()
     }
 
@@ -146,7 +149,37 @@ final class AppModel {
                 scrollToTop[newTab, default: 0] += 1
             }
         } else {
+            if newTab == .search {
+                tabBeforeSearch = tab
+                // صورة للصفحة اللي كنت فيها قبل ما نفتح البحث: تبان تحت البحث وانت تسحب للرجوع
+                searchBackdrop = WindowSnapshot.capture()
+            } else if tab == .search {
+                searchBackdrop = nil
+            }
             tab = newTab
+        }
+    }
+
+    /// شكل الصفحة اللي كنت فيها لحظة فتحت البحث (تنمسح أول ما تطلع من البحث)
+    private(set) var searchBackdrop: UIImage?
+
+    /// التبويب اللي كنت فيه قبل البحث (السحب من الطرف يرجّعك له بنفس حالته)
+    private(set) var tabBeforeSearch: AppTab = .home
+
+    func goBackFromSearch() {
+        guard tab == .search else { return }
+        // التبديل لحظي وبدون أي تلاشي من النظام: الصفحة اللي سحبتها وصلت مكانها، فما لازم يتحرك شي ثاني.
+        // قبل كان التبويب يتلاشى ربع ثانية، فتطلع نسخة شفافة من الصفحة وتختفي
+        UIView.setAnimationsEnabled(false)
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { tab = tabBeforeSearch }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            UIView.setAnimationsEnabled(true)
+            // صورة الصفحة اللي تحت البحث تنشال بعد ما يخلص التبديل (مو بنفس اللحظة)
+            try? await Task.sleep(for: .milliseconds(600))
+            if self.tab != .search { self.searchBackdrop = nil }
         }
     }
 
@@ -178,6 +211,24 @@ final class AppModel {
                 tab = .home
                 paths[.home] = NavigationPath([MediaRef(id: id, kind: kind, name: name)])
             }
+        }
+    }
+
+    /// اختصار من Siri أو تطبيق الاختصارات
+    func runPendingIntent() {
+        guard let intent = PendingIntent.take() else { return }
+        switch intent {
+        case .search:
+            select(.search)
+        case .library:
+            select(.library)
+        case .resume:
+            // النواة لسا ما اشتغلت: نرجّع الطلب ويتنفّذ أول ما تجهز
+            guard core != nil, ready else { PendingIntent.resume.store(); return }
+            if continueWatching.isEmpty { refreshContinueWatching() }
+            guard let p = continueWatching.first else { select(.library); return }
+            tab = .home
+            paths[.home] = NavigationPath([MediaRef(id: p.mediaId, kind: p.kind, name: p.title, poster: p.poster)])
         }
     }
 
@@ -222,11 +273,12 @@ final class AppModel {
 
     func showToast(_ text: String) {
         toastTask?.cancel()
-        withAnimation(Motion.standard) { toast = text }
+        // الحركة كلها في ToastHost، هنا بس نغيّر القيمة
+        toast = text
         toastTask = Task {
             try? await Task.sleep(for: .seconds(2.2))
             guard !Task.isCancelled else { return }
-            withAnimation(Motion.standard) { toast = nil }
+            toast = nil
         }
     }
 

@@ -70,9 +70,10 @@ workflows:
       - name: Swift package tests (simulator)
         script: |
           if [ "$RUN_TESTS" = "1" ]; then
+            set -o pipefail
             cd QBCore
             SIM=$(xcrun simctl list devices available | grep -m1 -oE "iPhone [0-9]+[^(]*\(([0-9A-F-]+)\)" | grep -oE "[0-9A-F-]{36}")
-            xcodebuild test -scheme QBCore -destination "id=$SIM" CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../swift-tests.log | grep -E "Test (Suite|Case).*(passed|failed)|Executed|error:" | tail -40
+            xcodebuild test -scheme QBCore -destination "id=$SIM" CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../swift-tests.log | grep -E "REMUX-CHECK|qb-remux|passed after|failed after|recorded an issue|error:" | tail -80
           else
             echo "skipped (RUN_TESTS=$RUN_TESTS)"
           fi
@@ -81,3 +82,50 @@ workflows:
       - build/xcodebuild.log
       - rust-tests.log
       - swift-tests.log
+
+  # فحص المشغّل على المحاكي (سحب لتحت، X، التدوير) بصور ونصوص، ما يطلّع ipa
+  qb-player-check:
+    name: QB player check (simulator)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      xcode: latest
+      cocoapods: default
+      vars:
+        CARGO_TERM_COLOR: never
+        CARGO_PROFILE_RELEASE_LTO: thin
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "8"
+    cache:
+      cache_paths:
+        - $HOME/.cargo/registry
+        - $HOME/.cargo/git
+        - $CM_BUILD_DIR/rust/target
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: Install Rust + iOS targets
+        script: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          source "$HOME/.cargo/env" || true
+          echo "PATH=$HOME/.cargo/bin:$PATH" >> $CM_ENV
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          xcodebuild -version
+      - name: Build Rust core (device + simulator)
+        script: |
+          export QB_TARGETS="aarch64-apple-ios aarch64-apple-ios-sim"
+          ./scripts/build-core.sh
+      - name: Generate project + pods (with player check target)
+        script: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          python3 scripts/gen-strings.py
+          ruby tools/b9check/add-target.rb
+          xcodegen generate
+          pod install --repo-update
+      - name: Run player check on simulator
+        script: |
+          ./tools/b9check/run.sh
+    artifacts:
+      - build/check.zip

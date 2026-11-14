@@ -10,6 +10,8 @@ struct DetailsView: View {
 
     @State private var meta: MetaDetail?
     @State private var error: String?
+    /// السحب لتحت فوق الخلفية
+    @State private var pull: CGFloat = 0
     @State private var loading = true
     @State private var similar: [MetaPreview] = []
     @State private var season: UInt32?
@@ -55,9 +57,12 @@ struct DetailsView: View {
                 }
             }
             .padding(.bottom, 40)
+            // The page is exactly the screen width: nothing wider (like the stretchy header) can push RTL content past the left edge
+            .containerRelativeFrame(.horizontal)
         }
         .scrollIndicators(.hidden)
         .ignoresSafeArea(edges: .top)
+        .trackOverscroll($pull)
         .qbScreenBackground()
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -75,7 +80,8 @@ struct DetailsView: View {
         .task { await load() }
         .onChange(of: app.libraryVersion) { _, _ in refreshLocalState() }
         .onChange(of: app.continueWatching.count) { _, _ in refreshLocalState() }
-        .onDisappear { sources.cancel() }
+        // المشغّل فوق الصفحة مو رجوع منها: نخلّي المصادر مثل ما هي
+        .onDisappear { if !app.player.isPresented { sources.cancel() } }
         .sheet(item: $episodeSheet) { video in
             EpisodeSourcesSheet(ref: currentRef, meta: meta, video: video)
                 .environment(app)
@@ -85,10 +91,12 @@ struct DetailsView: View {
                 .presentationBackground(.regularMaterial)
         }
         .sheet(isPresented: $showReport) {
+            let fitted = AddonReportSheet.fittedHeight(count: report.count)
             AddonReportSheet(report: report)
                 .environment(\.layoutDirection, app.language.direction)
                 .environment(\.locale, app.language.locale)
-                .presentationDetents([.medium])
+                .presentationDetents(fitted > 620 ? [.height(620), .large] : [.height(fitted)])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -102,6 +110,11 @@ struct DetailsView: View {
     private func load() async {
         guard let core = app.core else { return }
         refreshLocalState()
+        // رجعت للصفحة (بعد المشغّل مثلًا): البيانات موجودة، لا نعيد تحميلها ولا نحرّكها من جديد
+        if let meta, meta.id == ref.id, !loading {
+            if !isSeries { sources.load(core: core, kind: meta.kind, id: meta.id) }
+            return
+        }
         loading = true
         error = nil
         do {
@@ -143,11 +156,15 @@ struct DetailsView: View {
 
     private var header: some View {
         ZStack(alignment: .bottomLeading) {
+            // الخلفية من حافة لحافة لين فوق شريط الحالة، وتتمطّط لفوق لما تسحب
             Color.clear
                 .frame(height: 470)
-                .overlay { RemoteImage(url: meta?.background ?? ref.background ?? meta?.poster ?? ref.poster, maxPixel: 1400) }
-                .clipped()
-                .overlay(alignment: .top) { Palette.topScrim.frame(height: 130) }
+                .overlay(alignment: .bottom) {
+                    RemoteImage(url: meta?.background ?? ref.background ?? meta?.poster ?? ref.poster, maxPixel: 1400)
+                        .frame(height: 470 + pull)
+                        .clipped()
+                        .overlay(alignment: .top) { Palette.topScrim.frame(height: 130) }
+                }
                 .overlay(alignment: .bottom) { Palette.scrim.frame(height: 280) }
 
             VStack(alignment: .leading, spacing: 12) {
@@ -171,7 +188,7 @@ struct DetailsView: View {
             if let r = meta?.imdbRating, !r.isEmpty { RatingBadge(rating: r) }
             if let y = meta?.releaseInfo, !y.isEmpty { Text(y) }
             if let rt = meta?.runtime, !rt.isEmpty { Text(rt) }
-            if let g = meta?.genres.prefix(2), !g.isEmpty { Text(g.joined(separator: " · ")).lineLimit(1) }
+            if let g = meta.map({ Self.uniqueGenres($0.genres).prefix(2) }), !g.isEmpty { Text(g.map { Genres.display($0, arabic: app.language == .arabic) }.joined(separator: " · ")).lineLimit(1) }
         }
         .font(Typo.caption)
         .foregroundStyle(.secondary)
@@ -181,9 +198,10 @@ struct DetailsView: View {
         GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
                 PrimaryButton(title: playTitle, systemImage: startingPlay ? "hourglass" : "play.fill", expand: true) {
+                    // ما نعطّل الزر (التعطيل يبهّت النص)، بس ما يسوي شي لين تجهز البيانات
+                    guard meta != nil, !startingPlay else { return }
                     Task { await playMain() }
                 }
-                .disabled(meta == nil || startingPlay)
                 .sensoryFeedback(Haptics.light, trigger: startingPlay)
                 if let trailer = meta?.trailerYtIds.first {
                     GlassCircleButton(systemImage: "film.stack", size: 50, label: L("الإعلان")) {
@@ -256,17 +274,20 @@ struct DetailsView: View {
             if let p = progress, let f = p.fraction, f > 0.01 {
                 HStack(spacing: 10) {
                     ProgressLine(fraction: f, height: 4)
+                        .frame(minWidth: 40, maxWidth: .infinity)
                         .environment(\.layoutDirection, .leftToRight)
                     if let left = TimeFormat.minutesLeft(position: p.positionS, duration: p.durationS) {
-                        Text(L("باقي %@ د", "\(left)")).font(Typo.caption).foregroundStyle(.secondary).fixedSize()
+                        // Never squeezed or clipped: the bar gives way, not the label
+                        Text(L("باقي %@ د", "\(left)")).font(Typo.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).fixedSize().layoutPriority(1)
                     }
                 }
             }
             if !m.genres.isEmpty {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        ForEach(m.genres, id: \.self) { g in
-                            Text(g).font(Typo.caption)
+                        ForEach(Self.uniqueGenres(m.genres), id: \.self) { g in
+                            Text(Genres.display(g, arabic: app.language == .arabic)).font(Typo.caption)
                                 .padding(.horizontal, 12).frame(height: 30)
                                 .glassEffect(.regular, in: .capsule)
                         }
@@ -310,7 +331,7 @@ struct DetailsView: View {
                         EpisodeRow(video: v, fallbackImage: m.background ?? m.poster, current: progress?.episodeId == v.id,
                                    fraction: progress?.episodeId == v.id ? progress?.fraction : nil, locale: locale)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(BouncyPressStyle(depth: 0.96))
                 }
             }
             .padding(.horizontal, 20)
@@ -412,12 +433,14 @@ struct DetailsView: View {
                         NavigationLink(value: MediaRef(item, zoomID: "sim-\(ref.id)|\(item.id)")) {
                             PosterCard(item)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bouncyCard)
                     }
                 }
                 .padding(.horizontal, 20)
             }
             .scrollIndicators(.hidden)
+            // الضغطة المطاطية تكبر البطاقة فوق حجمها شوي: لا تنقص من فوق أو تحت
+            .scrollClipDisabled()
         }
     }
 
@@ -556,35 +579,76 @@ struct EpisodeSourcesSheet: View {
     }
 }
 
-/// كم مصدر جابت كل إضافة وكم منها شغّال
+/// كم مصدر جابت كل إضافة وكم منها شغّال: بطاقة زجاجية لكل إضافة، والأرقام موزّعة بالتساوي على عرض البطاقة
 struct AddonReportSheet: View {
     let report: [AddonReport]
 
+    /// Sheet height that fits the cards (title bar + cards), capped so long lists scroll
+    static func fittedHeight(count: Int) -> CGFloat {
+        let bar: CGFloat = 64, card: CGFloat = 112, spacing: CGFloat = 12, bottom: CGFloat = 34
+        return bar + CGFloat(max(count, 1)) * card + CGFloat(max(count - 1, 0)) * spacing + bottom
+    }
+
     var body: some View {
         NavigationStack {
-            List(report, id: \.addon) { r in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(r.addon).font(Typo.headline)
-                    HStack(spacing: 14) {
-                        stat(L("المصادر"), r.total)
-                        stat(L("شغّال"), r.alive, color: Palette.live)
-                        stat(L("أصلي"), r.native)
-                        stat("VLC", r.vlc)
-                        if r.other > 0 { stat(L("غيرها"), r.other) }
-                    }
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(report, id: \.addon) { r in card(r) }
                 }
-                .padding(.vertical, 4)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 16)
             }
-            .scrollContentBackground(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
             .navigationTitle(L("تقرير الإضافات"))
             .navigationBarTitleDisplayMode(.inline)
         }
     }
 
+    private func card(_ r: AddonReport) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(r.addon).font(Typo.headline).lineLimit(1)
+            // Five equal columns across the full width, always the same five (zero is dimmed, never hidden)
+            HStack(spacing: 0) {
+                stat(L("المصادر"), r.total)
+                divider
+                stat(L("شغّال"), r.alive, color: Palette.live)
+                divider
+                stat(L("أصلي"), r.native)
+                divider
+                stat("VLC", r.vlc)
+                divider
+                stat(L("غيرها"), r.other)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    }
+
+    private var divider: some View {
+        Rectangle().fill(.white.opacity(0.12)).frame(width: 1, height: 28)
+    }
+
     private func stat(_ label: String, _ n: UInt32, color: Color = .primary) -> some View {
-        VStack(spacing: 1) {
+        VStack(spacing: 2) {
             Text("\(n)").font(Typo.headline).foregroundStyle(color).monospacedDigit()
-            Text(label).font(Typo.badge).foregroundStyle(.secondary)
+            Text(label).font(Typo.badge).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+        }
+        .frame(maxWidth: .infinity)
+        .opacity(n == 0 ? 0.45 : 1)
+    }
+}
+
+
+extension DetailsView {
+    /// التصنيفات بدون تكرار (بعض الإضافات ترسل نفس التصنيف مرتين)، بنفس الترتيب
+    static func uniqueGenres(_ genres: [String]) -> [String] {
+        var seen = Set<String>()
+        return genres.compactMap { g in
+            let t = g.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty, seen.insert(t.lowercased()).inserted else { return nil }
+            return t
         }
     }
 }

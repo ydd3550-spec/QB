@@ -50,12 +50,18 @@ struct MediaRef: Hashable, Sendable {
 /// يربط شاشات التفاصيل والكتالوجات بمسار التنقل مع حركة التكبير
 struct MediaDestinations: ViewModifier {
     let namespace: Namespace.ID
+    /// false: فتح ورجوع iOS العادي (الصفحة اللي قبل تبان حيّة تحتها وانت تسحب من الطرف)
+    var zoomTransition = true
 
     func body(content: Content) -> some View {
         content
             .navigationDestination(for: MediaRef.self) { ref in
-                DetailsView(ref: ref)
-                    .navigationTransition(.zoom(sourceID: ref.zoomID, in: namespace))
+                if zoomTransition {
+                    DetailsView(ref: ref)
+                        .navigationTransition(.zoom(sourceID: ref.zoomID, in: namespace))
+                } else {
+                    DetailsView(ref: ref)
+                }
             }
             .navigationDestination(for: CatalogRoute.self) { route in
                 CatalogGridView(route: route, namespace: namespace)
@@ -64,7 +70,7 @@ struct MediaDestinations: ViewModifier {
 }
 
 extension View {
-    func mediaDestinations(_ namespace: Namespace.ID) -> some View {
-        modifier(MediaDestinations(namespace: namespace))
+    func mediaDestinations(_ namespace: Namespace.ID, zoomTransition: Bool = true) -> some View {
+        modifier(MediaDestinations(namespace: namespace, zoomTransition: zoomTransition))
     }
 }

@@ -45,15 +45,21 @@ struct LibraryView: View {
                     }
                     .padding(.vertical, 12)
                 }
+                // على الصفحة نفسها بس (لو على كل التنقل كانت صفحات التفاصيل اللي تنفتح من هنا تحدّث المكتبة بدالها)
+                .refreshable {
+                    reload()
+                    // القراءة من الجهاز لحظية: الدائرة تبقى شوي عشان تنشاف وترجع الصفحة بنعومة
+                    try? await Task.sleep(for: .milliseconds(450))
+                }
                 .onChange(of: app.scrollToTop[.library]) { _, _ in
                     withAnimation(Motion.soft) { proxy.scrollTo("top", anchor: .top) }
                 }
             }
             .qbScreenBackground()
             .navigationTitle(L("مكتبتي"))
+            .qbNavBar()
             .mediaDestinations(zoom)
             .task(id: app.libraryVersion) { reload() }
-            .refreshable { reload() }
         }
     }
 
@@ -100,7 +106,7 @@ struct LibraryView: View {
                         PosterCard(name: item.title, poster: item.poster, width: nil)
                             .matchedTransitionSource(id: ref.zoomID, in: zoom)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bouncyCard)
                     .contextMenu {
                         Button(role: .destructive) {
                             withAnimation(Motion.standard) { _ = app.toggleLibrary(ref) }
@@ -129,12 +135,14 @@ struct LibraryView: View {
                                 PosterCard(name: h.title, poster: h.poster, width: 104)
                                     .matchedTransitionSource(id: ref.zoomID, in: zoom)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.bouncyCard)
                         }
                     }
                     .padding(.horizontal, 20)
                 }
                 .scrollIndicators(.hidden)
+                // الضغطة المطاطية تكبر البطاقة فوق حجمها شوي: لا تنقص من فوق أو تحت
+                .scrollClipDisabled()
             }
         }
     }

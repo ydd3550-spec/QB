@@ -27,7 +27,9 @@ let package = Package(
         .testTarget(
             name: "QBCoreTests",
             dependencies: ["QBCore"],
-            path: "Tests/QBCoreTests"
+            path: "Tests/QBCoreTests",
+            resources: [.copy("Fixtures")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
 )

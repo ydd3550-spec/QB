@@ -26,6 +26,8 @@ enum Typo {
     static let headline = font(.semibold, 16, .headline)
     static let body = font(.regular, 16, .body)
     static let bodyMedium = font(.medium, 16, .body)
+    /// صفوف الإعدادات: أصغر شوي
+    static let row = font(.medium, 15, .body)
     static let info = font(.regular, 14, .subheadline)
     static let infoMedium = font(.medium, 14, .subheadline)
     /// نص الأزرار (مدمج)

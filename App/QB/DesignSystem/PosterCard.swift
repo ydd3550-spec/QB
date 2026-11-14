@@ -18,12 +18,20 @@ struct PosterCard: View {
                 .aspectRatio(2 / 3, contentMode: .fit)
                 .overlay { RemoteImage(url: poster, maxPixel: 360) }
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
+                // حافة زجاجية: لمعة فوق تخف لتحت
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.04), Palette.accent.opacity(0.10)],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8)
+                )
+                .shadow(color: .black.opacity(0.35), radius: 8, y: 5)
                 .overlay(alignment: .topLeading) {
                     if let rating, !rating.isEmpty {
                         RatingBadge(rating: rating)
                             .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(.black.opacity(0.55), in: Capsule())
+                            .background(.black.opacity(0.35), in: Capsule())
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 0.5))
                             .foregroundStyle(.white)
                             .padding(6)
                     }

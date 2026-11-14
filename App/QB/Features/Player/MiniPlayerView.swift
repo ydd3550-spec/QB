@@ -9,15 +9,24 @@ struct MiniPlayerView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            EngineSurface(surface: player.isPresented ? nil : player.surface)
-                .frame(width: placement == .inline ? 40 : 58, height: placement == .inline ? 24 : 33)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            // الوضع المصغّر جدًا: صورة العمل (الفيديو الحي يطلع أسود بهالحجم)، والعادي: الفيديو نفسه
+            ZStack {
+                EngineSurface(surface: player.isPresented ? nil : player.surface)
+                if placement == .inline {
+                    RemoteImage(url: player.context?.meta?.background ?? player.context?.ref.background ?? player.context?.ref.poster, maxPixel: 200)
+                }
+            }
+            .frame(width: placement == .inline ? 40 : 58, height: placement == .inline ? 24 : 33)
+            .background(Palette.surfaceRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text(player.context?.title ?? "").font(Typo.caption).lineLimit(1)
                 if placement != .inline, let sub = player.context?.subtitle {
-                    Text(sub).font(Typo.badge).foregroundStyle(.secondary).lineLimit(1)
+                    Text(sub).font(Typo.font(.medium, 10, .caption2)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
+            // بعيد عن خط التقدّم اللي تحت
+            .padding(.bottom, placement == .inline ? 0 : 5)
             Spacer(minLength: 4)
             Button {
                 player.togglePlay()
@@ -29,18 +38,16 @@ struct MiniPlayerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(player.isPlaying ? L("إيقاف مؤقت") : L("تشغيل"))
-            if placement != .inline {
-                Button {
-                    player.close()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .frame(width: 32, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L("إغلاق"))
+            Button {
+                player.close()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: placement == .inline ? 12 : 14, weight: .bold))
+                    .frame(width: placement == .inline ? 26 : 32, height: 36)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("إغلاق"))
         }
         .padding(.horizontal, 12)
         .contentShape(Rectangle())

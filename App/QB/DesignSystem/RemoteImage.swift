@@ -8,6 +8,10 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
     static let shared = ImagePipeline()
 
     private let memory = NSCache<NSString, UIImage>()
+    /// صور مثبّتة بالذاكرة (صورة بانر الرئيسية وشعاره): ما تنمسح مع زحمة الكاش (البحث يحمّل صور كثير)
+    /// ولا مع ضغط الذاكرة، فلما ترجع للرئيسية تطلع الصورة نفسها من أول إطار
+    private let pinLock = NSLock()
+    private var pinned: [NSString: UIImage] = [:]
     private let session: URLSession
 
     private init() {
@@ -26,7 +30,27 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
     }
 
     func cached(_ url: URL, maxPixel: CGFloat) -> UIImage? {
-        memory.object(forKey: key(url, maxPixel))
+        let k = key(url, maxPixel)
+        pinLock.lock()
+        let p = pinned[k]
+        pinLock.unlock()
+        if let p { return p }
+        return memory.object(forKey: k)
+    }
+
+    /// يثبّت هالصور (اللي بالكاش الحين) بدل المثبّت قبلها
+    func pin(_ entries: [(URL, CGFloat)]) {
+        var next: [NSString: UIImage] = [:]
+        pinLock.lock()
+        let old = pinned
+        pinLock.unlock()
+        for (url, px) in entries {
+            let k = key(url, px)
+            if let img = old[k] ?? memory.object(forKey: k) { next[k] = img }
+        }
+        pinLock.lock()
+        pinned = next
+        pinLock.unlock()
     }
 
     func image(for url: URL, maxPixel: CGFloat) async -> UIImage? {
@@ -61,6 +85,12 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
         return UIImage(cgImage: cg)
     }
 
+    /// صورة جاهزة (من القرص مثلًا) تنحط بالكاش عشان تطلع على طول
+    func store(_ image: UIImage, for url: URL, maxPixel: CGFloat) {
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        memory.setObject(image, forKey: key(url, maxPixel), cost: cost)
+    }
+
     func clearMemory() { memory.removeAllObjects() }
 
     func clearDisk() { session.configuration.urlCache?.removeAllCachedResponses() }
@@ -74,9 +104,27 @@ struct RemoteImage: View {
     var maxPixel: CGFloat = 420
     var contentMode: ContentMode = .fill
     var placeholderSymbol: String? = "film"
+    /// لو ما انفتحت الصورة: حرف بالذهبي بدل الرمز (شعارات الإضافات)
+    var placeholderText: String? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
+    /// رابط الصورة المعروضة الحين
+    @State private var loadedURL: String?
+
+    init(url: String?, maxPixel: CGFloat = 420, contentMode: ContentMode = .fill,
+         placeholderSymbol: String? = "film", placeholderText: String? = nil) {
+        self.url = url
+        self.maxPixel = maxPixel
+        self.contentMode = contentMode
+        self.placeholderSymbol = placeholderSymbol
+        self.placeholderText = placeholderText
+        // لو الصورة بالذاكرة تطلع من أول إطار (بدون إطار فاضي ثم ظهور، مثل شعار البانر لما ترجع للرئيسية)
+        if let url, let u = URL(string: url), let hit = ImagePipeline.shared.cached(u, maxPixel: maxPixel) {
+            _image = State(initialValue: hit)
+            _loadedURL = State(initialValue: url)
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -88,7 +136,11 @@ struct RemoteImage: View {
             } else {
                 // الشعارات (بدون رمز بديل) خلفيتها شفافة
                 (placeholderSymbol == nil ? Color.clear : Palette.surface)
-                if failed, let placeholderSymbol {
+                if failed, let placeholderText {
+                    Text(placeholderText)
+                        .font(Typo.font(.bold, 20, .title3))
+                        .foregroundStyle(Palette.accent)
+                } else if failed, let placeholderSymbol {
                     Image(systemName: placeholderSymbol)
                         .font(.system(size: 22, weight: .light))
                         .foregroundStyle(.tertiary)
@@ -104,8 +156,11 @@ struct RemoteImage: View {
             failed = true
             return
         }
+        // رجعت الصفحة تبان (رجوع من صفحة ثانية): الصورة نفسها معروضة، لا نمسحها ونعيد تحميلها
+        if image != nil, loadedURL == url { return }
         if let hit = ImagePipeline.shared.cached(u, maxPixel: maxPixel) {
             image = hit
+            loadedURL = url
             return
         }
         image = nil
@@ -116,5 +171,6 @@ struct RemoteImage: View {
             image = loaded
             failed = loaded == nil
         }
+        loadedURL = loaded == nil ? nil : url
     }
 }

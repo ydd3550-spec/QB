@@ -81,18 +81,30 @@ struct SettingsView: View {
                         row(L("لغة الترجمة"), "captions.bubble.fill")
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        row(L("حجم الترجمة"), "textformat.size", detail: "\(Int(app.subtitleSize * 100))%")
-                        Slider(value: Binding(get: { app.subtitleSize }, set: { app.subtitleSize = $0 }), in: 0.7...1.8, step: 0.1) { editing in
+                        row(L("حجم الترجمة"), "textformat.size", detail: "\(Int((app.subtitleSize * 100).rounded()))%")
+                        // صغير يسار وكبير يمين دايمًا (مثل أبل)، عشان مكان المؤشر يطابق الرقم
+                        Slider(value: Binding(get: { app.subtitleSize }, set: { app.subtitleSize = ($0 * 10).rounded() / 10 }), in: 0.7...1.8, step: 0.1) {
+                            Text(L("حجم الترجمة"))
+                        } minimumValueLabel: {
+                            Image(systemName: "textformat.size.smaller").font(.caption).foregroundStyle(.secondary)
+                        } maximumValueLabel: {
+                            Image(systemName: "textformat.size.larger").font(.body).foregroundStyle(.secondary)
+                        } onEditingChanged: { editing in
                             if !editing { app.save("subtitle_size", String(format: "%.1f", app.subtitleSize)) }
                         }
+                        .environment(\.layoutDirection, .leftToRight)
                         Text(L("هذا شكل الترجمة"))
                             .font(Typo.font(.semibold, 19 * app.subtitleSize, .title3))
                             .foregroundStyle(.white)
+                            // ظل مثل الترجمة بالمشغّل عشان تنقرا حتى على الزجاج الأبيض
+                            .shadow(color: .black.opacity(0.85), radius: 1.2, y: 0.5)
+                            .shadow(color: .black.opacity(0.45), radius: 5)
                             .padding(.horizontal, 12).padding(.vertical, 6)
                             .background(.black.opacity(app.subtitleBackground ? 0.6 : 0.0), in: RoundedRectangle(cornerRadius: 8))
+                            .animation(.smooth(duration: 0.25), value: app.subtitleBackground)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background(Color.gray.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+                            .padding(.vertical, 16)
+                            .background { LuminousGlass(cornerRadius: 16) }
                     }
                     Toggle(isOn: Binding(get: { app.subtitleBackground }, set: { app.subtitleBackground = $0; app.save("subtitle_background", $0 ? "1" : "0") })) {
                         row(L("خلفية للترجمة"), "rectangle.fill")
@@ -126,6 +138,14 @@ struct SettingsView: View {
                     Text(L("التصدير يشمل المكتبة والتقدّم والسجل والإضافات. المسح ما يلمس مكتبتك"))
                 }
 
+                // نفس باقي الصفوف بالضبط: البطاقة الرمادية، مربّع الأيقونة الذهبي، ونفس الخط والمحاذاة
+                Section {
+                    Button(action: FeedbackRow.open) {
+                        row(L("أرسل ملاحظاتك"), "paperplane.fill", trailingIcon: "arrow.up.forward")
+                    }
+                    .accessibilityLabel(L("أرسل ملاحظاتك"))
+                }
+
                 Section {
                     HStack {
                         QBLogo(size: 30)
@@ -135,8 +155,13 @@ struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 40)
+            .font(Typo.row)
             .qbScreenBackground()
             .navigationTitle(L("الإعدادات"))
+            // عنوان صغير بالنص فوق، والمحتوى يبدأ على طول تحته (بدون مساحة العنوان الكبير الفاضية)
+            .navigationBarTitleDisplayMode(.inline)
+            .qbNavBar()
             .navigationDestination(for: SettingsRoute.self) { route in
                 switch route {
                 case .addons: AddonsView()
@@ -197,23 +222,81 @@ struct SettingsView: View {
         }
     }
 
-    private func row(_ title: String, _ icon: String, detail: String? = nil, destructive: Bool = false) -> some View {
+    private func row(_ title: String, _ icon: String, detail: String? = nil, destructive: Bool = false, trailingIcon: String? = nil) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(destructive ? .white : Palette.onAccent)
-                .frame(width: 30, height: 30)
-                .background((destructive ? Palette.dead : Palette.accent).gradient, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text(title).font(Typo.bodyMedium).foregroundStyle(destructive ? Palette.dead : .primary)
+                .frame(width: 26, height: 26)
+                .background((destructive ? Palette.dead : Palette.accent).gradient, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Text(title).font(Typo.row).foregroundStyle(destructive ? Palette.dead : .primary)
             if let detail {
                 Spacer()
-                Text(detail).font(Typo.info).foregroundStyle(.secondary).monospacedDigit()
+                Text(detail).font(Typo.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            if let trailingIcon {
+                Spacer()
+                Image(systemName: trailingIcon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
             }
         }
     }
 }
 
 /// ملف JSON للتصدير
+/// زجاج أبيض منوّر مثل أبل: زجاج بلمعة بيضاء، نور ناعم من فوق، وحافة مضيئة
+struct LuminousGlass: View {
+    var cornerRadius: CGFloat = 16
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .fill(.white.opacity(0.18))
+            .glassEffect(.regular.tint(.white.opacity(0.55)), in: shape)
+            // نور من فوق ينزل ويخف
+            .overlay(
+                shape.fill(
+                    LinearGradient(colors: [.white.opacity(0.55), .white.opacity(0.12), .white.opacity(0.0)],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+                .blendMode(.plusLighter)
+            )
+            // توهّج داخلي خفيف بالنص
+            .overlay(
+                shape.fill(
+                    RadialGradient(colors: [.white.opacity(0.35), .clear], center: .center, startRadius: 4, endRadius: 180)
+                )
+            )
+            // حافة مضيئة: أقوى فوق وتخف تحت
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.35), .white.opacity(0.6)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1
+                )
+            )
+            .shadow(color: .white.opacity(0.25), radius: 12)
+            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+    }
+}
+
+/// «أرسل ملاحظاتك»: يفتح محادثة التلقرام الخاصة على طول
+enum FeedbackRow {
+    static let telegramUser = "l_jii"
+
+    /// تطبيق التلقرام أول (يفتح الخاص مباشرة)، ولو مو مثبّت نفتح t.me
+    @MainActor
+    static func open() {
+        Haptics.tap()
+        let app = URL(string: "tg://resolve?domain=\(telegramUser)")!
+        let web = URL(string: "https://t.me/\(telegramUser)")!
+        UIApplication.shared.open(app, options: [:]) { ok in
+            if !ok { UIApplication.shared.open(web) }
+        }
+    }
+}
+
 struct JSONDocument: FileDocument {
     static let readableContentTypes: [UTType] = [.json]
     var text: String
@@ -234,11 +317,28 @@ struct HistoryView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.locale) private var locale
     @State private var entries: [HistoryEntry] = []
+    @State private var episodes: [String: String] = [:]
     @State private var confirm = false
+
+    /// كل عمل مرة وحدة بآخر وقت شفته فيه، والمسلسل معه آخر حلقة
+    private func load() {
+        let all = (try? app.core?.history(limit: 300)) ?? []
+        var seen = Set<String>()
+        let unique = all.sorted { $0.watchedAt > $1.watchedAt }.filter { seen.insert($0.mediaId).inserted }
+        var eps: [String: String] = [:]
+        for h in unique where h.kind == .series {
+            if let p = (try? app.core?.progress(mediaId: h.mediaId)) ?? nil,
+               let id = p.episodeId, let (s, e) = WidgetBridge.seasonEpisode(id) {
+                eps[h.mediaId] = L("م%@ ح%@", "\(s)", "\(e)")
+            }
+        }
+        entries = unique
+        episodes = eps
+    }
 
     var body: some View {
         List {
-            ForEach(Array(entries.enumerated()), id: \.offset) { _, h in
+            ForEach(entries, id: \.mediaId) { h in
                 NavigationLink(value: MediaRef(id: h.mediaId, kind: h.kind, name: h.title, poster: h.poster)) {
                     HStack(spacing: 12) {
                         RemoteImage(url: h.poster, maxPixel: 160)
@@ -246,8 +346,13 @@ struct HistoryView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(h.title).font(Typo.bodyMedium).lineLimit(1)
-                            Text(Date(timeIntervalSince1970: TimeInterval(h.watchedAt)).formatted(.relative(presentation: .named).locale(locale)))
-                                .font(Typo.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                if let ep = episodes[h.mediaId] {
+                                    Text(ep).font(Typo.badge).foregroundStyle(Palette.accent)
+                                }
+                                Text(Date(timeIntervalSince1970: TimeInterval(h.watchedAt)).formatted(.relative(presentation: .named).locale(locale)))
+                                    .font(Typo.caption).foregroundStyle(.secondary)
+                            }
                         }
                         Spacer()
                         TagBadge(text: h.engine == .vlc ? "VLC" : L("أصلي"))
@@ -258,6 +363,9 @@ struct HistoryView: View {
         .scrollContentBackground(.hidden)
         .qbScreenBackground()
         .navigationTitle(L("سجل المشاهدة"))
+        // عنوان صغير بالنص فوق، والمحتوى يبدأ على طول تحته (بدون مساحة العنوان الكبير الفاضية)
+        .navigationBarTitleDisplayMode(.inline)
+        .qbNavBar()
         .overlay {
             if entries.isEmpty {
                 EmptyStateView(title: L("السجل فاضي"), systemImage: "clock")
@@ -275,6 +383,6 @@ struct HistoryView: View {
                 app.libraryVersion += 1
             }
         }
-        .task(id: app.libraryVersion) { entries = (try? app.core?.history(limit: 300)) ?? [] }
+        .task(id: app.libraryVersion) { load() }
     }
 }

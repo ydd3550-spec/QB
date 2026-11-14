@@ -1,0 +1,16 @@
+[package]
+name = "qb-remux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Remux MKV (H.264/HEVC + AAC/AC-3/E-AC-3/MP3) to HLS fMP4 on the fly, served on 127.0.0.1,
+# so AVPlayer can play sources it can't open directly. No re-encoding: only the container changes.
+[dependencies]
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util", "rt-multi-thread", "sync", "time"] }
+tracing = { workspace = true }
+flate2 = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
