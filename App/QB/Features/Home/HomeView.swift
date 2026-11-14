@@ -156,6 +156,10 @@ struct HomeView: View {
             let result = try await (force ? core.homeRowsFresh() : core.homeRows())
             let fresh = result.filter { !$0.items.isEmpty }
             withAnimation(Motion.standard) { rows = fresh }
+            // prefetch: حمّل بوسترات الرفوف مسبقًا عشان التمرير يكون ناعم
+            let urls = fresh.flatMap { $0.items.map(\.poster) }
+            ImagePipeline.shared.prefetch(urls, maxPixel: 360)
+            if let hero = heroItem { ImagePipeline.shared.prefetch([hero.background ?? hero.poster], maxPixel: 900) }
             loadedVersion = app.addonsVersion
             HeroCache.sessionRows = fresh
             HeroCache.sessionVersion = app.addonsVersion
@@ -204,6 +208,13 @@ struct HeroBanner: View {
                     .overlay(alignment: .top) { Palette.topScrim.frame(height: 140).followsStretchTop() }
                     .clipShape(SideClip())
                     .overlay(alignment: .bottom) { Palette.scrim.frame(height: 300) }
+                    // وهج ذهبي خفيف خلف العنوان عشان عمق وفخامة
+                    .overlay(alignment: .bottomLeading) {
+                        RadialGradient(colors: [Palette.accent.opacity(0.12), .clear], center: .center, startRadius: 10, endRadius: 260)
+                            .frame(width: 520, height: 320)
+                            .blendMode(.plusLighter)
+                            .allowsHitTesting(false)
+                    }
 
                 VStack(alignment: .leading, spacing: 12) {
                     if let logo = item.logo {

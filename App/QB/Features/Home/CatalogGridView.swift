@@ -39,6 +39,8 @@ final class CatalogPager {
                 guard key == self.key, !Task.isCancelled else { return }
                 let fresh = page.filter { seen.insert($0.id).inserted }
                 withAnimation(Motion.standard) { items.append(contentsOf: fresh) }
+                // prefetch: حمّل بوسترات الصفحة مسبقًا
+                ImagePipeline.shared.prefetch(fresh.map(\.poster), maxPixel: 360)
                 if fresh.isEmpty { exhausted = true }
             } catch is CancellationError {
             } catch {
