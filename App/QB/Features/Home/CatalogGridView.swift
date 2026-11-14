@@ -38,7 +38,11 @@ final class CatalogPager {
                 let page = try await core.catalogPage(addonUrl: addonUrl, kind: kind, catalogId: catalogId, genre: genre, skip: skip)
                 guard key == self.key, !Task.isCancelled else { return }
                 let fresh = page.filter { seen.insert($0.id).inserted }
-                withAnimation(Motion.standard) { items.append(contentsOf: fresh) }
+                if UIAccessibility.isReduceMotionEnabled {
+                    items.append(contentsOf: fresh)
+                } else {
+                    withAnimation(Motion.standard) { items.append(contentsOf: fresh) }
+                }
                 // prefetch: حمّل بوسترات الصفحة مسبقًا
                 ImagePipeline.shared.prefetch(fresh.map(\.poster), maxPixel: 360)
                 if fresh.isEmpty { exhausted = true }
