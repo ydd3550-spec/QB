@@ -182,5 +182,21 @@ do {
     check(size == (w: 1280, h: 536), "subtitles: a real new size is taken")
 }
 
+// 10) عدّاد الإطارات يرجع لصفر بعد ما ينفتح المصدر من جديد: ما نحسبها صورة واقفة
+do {
+    var w = FrameWatch()
+    var frozen = false
+    for i in 0..<25 { if w.observe(frames: 50 + i * 2, time: Double(i) * 0.2, playing: true, now: Double(i) * 0.2) == .frozen { frozen = true } }
+    for i in 0..<25 { if w.observe(frames: i, time: 5 + Double(i) * 0.2, playing: true, now: 5 + Double(i) * 0.2) == .frozen { frozen = true } }
+    check(!frozen, "reopen: the frame counter going back to 0 is not a frozen picture")
+
+    var z = FrameWatch()
+    _ = z.observe(frames: 40, time: 0, playing: true, now: 0)
+    _ = z.observe(frames: 42, time: 0.2, playing: true, now: 0.2)
+    var caught = false
+    for i in 0..<40 { if z.observe(frames: 0, time: 1 + Double(i) * 0.2, playing: true, now: 1 + Double(i) * 0.2) == .frozen { caught = true } }
+    check(caught, "reopen: a picture that never comes back after the reopen is caught (not blind)")
+}
+
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

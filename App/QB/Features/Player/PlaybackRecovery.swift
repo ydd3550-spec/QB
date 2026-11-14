@@ -144,6 +144,13 @@ struct FrameWatch: Equatable {
     }
 
     private mutating func judge(frames: Int, time t: Double, playing: Bool, now: Double) -> Verdict {
+        if let last = lastFrames, frames < last {
+            // عدّاد المشغّل رجع لصفر: فتح المصدر من جديد (استعادة، رجوع، VLC من جديد).
+            // بدون هذا كنا نحسبها "صورة واقفة" لين يتجاوز العدّاد رقمه القديم.
+            frameTime = t
+            stuckSince = nil
+            return .fine
+        }
         if let last = lastFrames, frames > last {
             everFrames = true
             frameTime = t

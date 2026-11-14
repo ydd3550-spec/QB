@@ -405,9 +405,23 @@ final class VLCEngine: PlaybackEngine {
         // العدّاد ما يشتغل أبد (ما تغيّر ولا مرة) = ما نحكم عليه
         // VLC refreshes these counters about once a second, so the bar is well above that (no false alarms
         // that would restart a healthy picture and cause stutter). At most 3 recoveries per load.
-        let videoDead = everPictures && parkedVideoTrack == nil && now.timeIntervalSince(picturesAt) > 3.5
+        //
+        // everPictures ينصفّر مع كل فتحة جديدة (reopen)، وكان هذا يخلّي الحارس أعمى للأبد لو الفتحة
+        // الجديدة ما عرضت ولا إطار (تعليق شبكة): الصورة تبقى واقفة والصوت يمشي وما فيه شي يكشفها.
+        // نعتبر إن المصدر فيه فيديو لو عرفنا مقاس الصورة، حتى لو ما وصل ولا إطار بهالفتحة.
+        let hasVideo = everPictures || player.videoSize.width > 0
+        let videoDead = hasVideo && parkedVideoTrack == nil && now.timeIntervalSince(picturesAt) > 3.5
         let audioDead = everAudio && player.currentAudioTrackIndex >= 0 && now.timeIntervalSince(audioAt) > 3.5
-        guard videoDead || audioDead, recoveries < 3, now.timeIntervalSince(lastRecoveryAt) > 5 else { return }
+        guard videoDead || audioDead else { return }
+        // المحاولات تتباعد كل مرة (5، 10، 15… لين 30 ثانية) وما نتوقف للأبد: بعد ما نخلص نسلّم
+        // للموديل عشان يعيد المصدر بالكامل أو يورّي رسالة، بدل صورة واقفة بلا نهاية
+        guard recoveries < 6, now.timeIntervalSince(lastRecoveryAt) > min(5 + Double(recoveries) * 5, 30) else {
+            if recoveries >= 6, now.timeIntervalSince(lastRecoveryAt) > 30, state != .stalled {
+                lastRecoveryAt = now
+                state = .stalled
+            }
+            return
+        }
         lastRecoveryAt = now
         recoveries += 1
         recoveryStage += 1
@@ -432,6 +446,13 @@ final class VLCEngine: PlaybackEngine {
     var bytesReceived: Int64? {
         guard let media = player.media else { return nil }
         return Int64(media.numberOfReadBytesOnInput)
+    }
+
+    /// عدد الإطارات اللي عرضها VLC فعلًا. النموذج (FrameWatch) يستخدمه عشان يكتشف
+    /// "الوقت يمشي والصورة واقفة" لما الحارس الداخلي يستسلم — وإلا كان يبقى أعمى على VLC.
+    var framesShown: Int? {
+        guard let media = player.media else { return nil }
+        return media.numberOfDisplayedPictures
     }
 
     /// الصورة واقفة والوقت يمشي

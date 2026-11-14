@@ -1156,8 +1156,13 @@ final class PlayerModel {
         let stalled = stalledSince.map { Date().timeIntervalSince($0) } ?? 0
         // شبكة ضعيفة: طول ما البيانات توصل ننتظر والمؤشر يدور، وما نعيد التحميل إلا لما الشبكة تسكت فعلًا
         let quiet: Double? = lastBytes >= 0 ? Date().timeIntervalSince(bytesAt) : nil
-        if StallPolicy.shouldReload(stalled: stalled, quiet: quiet, justReturned: justBack), recoveryAttempts < 3 {
-            recoverSource(reason: "stall", keepPaused: false)
+        if StallPolicy.shouldReload(stalled: stalled, quiet: quiet, justReturned: justBack) {
+            if recoveryAttempts < 3 {
+                recoverSource(reason: "stall", keepPaused: false)
+            } else if stalled > 45, errorMessage == nil {
+                // جرّبنا إعادة التحميل وما نفع: نوضّح للمستخدم بدل ما تبقى الصورة واقفة بلا نهاية
+                fail(L("انقطع الاتصال بالمصدر. اضغط تشغيل عشان نكمّل من نفس المكان"))
+            }
         }
     }
 
