@@ -196,5 +196,6 @@
   "إعادة تحميل": "Reload",
   "الرابط انتهى": "The link expired",
   "هذا مو رابط إضافة Stremio. لازم يكون رابط إضافة ينتهي بـ %@ أو يبدأ بـ %@": "This isn't a Stremio add-on link. It has to be an add-on link that ends with %@ or starts with %@",
-  "ما قدرنا نوصل للرابط. تأكد إنه رابط إضافة Stremio ينتهي بـ %@ أو يبدأ بـ %@ وإن النت شغّال": "We couldn't reach that link. Make sure it's a Stremio add-on link that ends with %@ or starts with %@, and that you're online"
+  "ما قدرنا نوصل للرابط. تأكد إنه رابط إضافة Stremio ينتهي بـ %@ أو يبدأ بـ %@ وإن النت شغّال": "We couldn't reach that link. Make sure it's a Stremio add-on link that ends with %@ or starts with %@, and that you're online",
+  "انقطع الاتصال بالمصدر. اضغط تشغيل عشان نكمّل من نفس المكان": "Lost the connection to the source. Tap play to carry on from the same spot."
 }
