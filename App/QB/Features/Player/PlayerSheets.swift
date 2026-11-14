@@ -362,8 +362,8 @@ struct SubtitleStyleSheet: View {
 
                 Section {
                     Picker(L("المكان"), selection: Binding(get: { Self.positionStep(app.subtitlePosition) }, set: { v in
-                        app.subtitlePosition = v
-                        app.save("subtitle_position", String(format: "%.2f", v))
+                        app.subtitlePosition = Self.positionValue(v)
+                        app.save("subtitle_position", String(format: "%.2f", app.subtitlePosition))
                         Haptics.tap()
                     })) {
                         Text(L("منخفض")).tag(0)
@@ -406,6 +406,14 @@ struct SubtitleStyleSheet: View {
         if value < 0.9 { return 0 }
         if value > 1.15 { return 2 }
         return 1
+    }
+
+    private static func positionValue(_ step: Int) -> Double {
+        switch step {
+        case 0: 0.8
+        case 2: 1.4
+        default: 1.0
+        }
     }
 
     private var sample: some View {
