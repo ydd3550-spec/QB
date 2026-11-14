@@ -164,6 +164,9 @@ struct SpeedSheet: View {
             List(rates, id: \.self) { r in
                 Button {
                     app.player.setRate(r)
+                    app.preferredSpeed = r
+                    app.save("preferred_speed", String(format: "%.2f", r))
+                    Haptics.tap()
                     dismiss()
                 } label: {
                     HStack {

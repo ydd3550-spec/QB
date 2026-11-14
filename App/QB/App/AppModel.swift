@@ -53,6 +53,7 @@ final class AppModel {
     var autoNext = true
     var skipIntroSeconds = 85
     var autoPiP = true
+    var preferredSpeed: Float = 1.0
 
     var colorScheme: ColorScheme? {
         switch appearance {
@@ -133,6 +134,7 @@ final class AppModel {
         autoNext = (get("auto_next") ?? "1") == "1"
         skipIntroSeconds = Int(get("skip_intro_seconds") ?? "") ?? 85
         autoPiP = (get("auto_pip") ?? "1") == "1"
+        preferredSpeed = Float(get("preferred_speed") ?? "") ?? 1.0
     }
 
     func save(_ key: String, _ value: String) {
