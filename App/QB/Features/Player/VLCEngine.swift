@@ -322,8 +322,23 @@ final class VLCEngine: PlaybackEngine {
             guard track >= 0 else { return }
             p.currentVideoTrackIndex = -1
             p.currentVideoTrackIndex = track
+            // واقف: نقدّم إطار واحد عشان تطلع صورة بدل شاشة سودا
+            if !p.isPlaying {
+                Thread.sleep(forTimeInterval: 0.3)
+                if !p.isPlaying { p.gotoNextFrame() }
+            }
         }
         view.scheduleRelayout()
+    }
+
+    /// الصورة واقفة والوقت يمشي: نبني مخرج الصورة من جديد على نفس الاتصال ونفس الثانية.
+    /// هذا أخف حل وأول شي نجربه: ما يقطع الاتصال، ولا يعيد بناء الترجمة، ولا يحرّك مكان التشغيل.
+    /// بعدها نقدّم لآخر إطار انعرض عشان المفكّك يفرّغ الإطارات المتأخرة ويتزامن مع الصوت.
+    func recoverPicture(at seconds: Double) {
+        guard !shutDown, !finished else { return }
+        restartVideoOutput()
+        if player.isSeekable, seconds > 1 { seek(to: seconds) }
+        picturesAt = Date()
     }
 
     /// يشغّل الصوت من جديد (مخرج صوت جديد) بعد ما ننشّط جلسة الصوت
@@ -428,7 +443,9 @@ final class VLCEngine: PlaybackEngine {
         // الصورة توقف والصوت يكمّل بعد التعليق: مفكّك الصورة يرمي كل إطار لأنه "متأخر" عن ساعة الصوت.
         // نرجع لآخر إطار انعرض: هذا يفرّغ المفكّك ويزامن الصورة والصوت والترجمة من نفس المكان
         let lastFrame = max(0, min(elapsed, frameTime))
-        if recoveryStage == 1 {
+        // أول محاولتين: مخرج الصورة بس (نفس الاتصال ونفس الثانية). بعدها نفتح المصدر من جديد.
+        // قبل كان يبدّل بينهم محاولة بمحاولة، فكان يفتح المصدر كامل كل ثاني تعليق بلا داعي.
+        if recoveryStage <= 2 {
             if videoDead {
                 restartVideoOutput()
                 if player.isSeekable, lastFrame > 1 { seek(to: lastFrame) }

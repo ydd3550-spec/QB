@@ -198,5 +198,24 @@ do {
     check(caught, "reopen: a picture that never comes back after the reopen is caught (not blind)")
 }
 
+// 11) سلّم استعادة الصورة: الأخف أول، وما نفتح المصدر من جديد إلا بعد ما تجرب الحلول اللي ما تلمس الاتصال
+do {
+    check(PictureRecovery.step(attempt: 1) == .restartOutput, "picture: the first try only rebuilds the video output (same connection, same second)")
+    check(PictureRecovery.step(attempt: 2) == .restartOutput, "picture: the second try still doesn't reload the source")
+    check(PictureRecovery.step(attempt: 3) == .reopen, "picture: the source is reloaded only on the third try")
+    check(PictureRecovery.step(attempt: 4) == .giveUp, "picture: then it stops instead of looping forever")
+    check(PictureRecovery.step(attempt: 9) == .giveUp, "picture: stays stopped however long it lasts")
+    var last = 0.0
+    var spacing = true
+    for a in 1...8 {
+        let b = PictureRecovery.backoff(attempt: a)
+        if b < last { spacing = false }
+        last = b
+    }
+    check(spacing, "picture: retries never come closer together")
+    check(PictureRecovery.backoff(attempt: 1) >= 5, "picture: never too eager on a healthy stream")
+    check(PictureRecovery.backoff(attempt: 12) <= 30, "picture: never waits longer than half a minute")
+}
+
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)
