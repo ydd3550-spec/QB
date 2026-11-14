@@ -279,6 +279,39 @@ final class NativeEngine: NSObject, PlaybackEngine {
         seek(to: seconds)
     }
 
+    // MARK: - معاينة السحب: صورة من الفيديو عند الثانية المطلوبة
+
+    private var previewGenerator: FrameGeneratorBox?
+    private var previewGeneratorItem: AVPlayerItem?
+    private var previewBusy = false
+
+    func frameImage(at seconds: Double) async -> UIImage? {
+        guard let item, item.status == .readyToPlay, !previewBusy else { return nil }
+        // المخرج ينبني مرة لكل ملف، وAVAssetImageGenerator يستخدم نفس المصدر (ونفس الترويسات) اللي شغّال عليه
+        if previewGeneratorItem !== item || previewGenerator == nil {
+            let g = AVAssetImageGenerator(asset: item.asset)
+            g.appliesPreferredTrackTransform = true
+            g.maximumSize = CGSize(width: 480, height: 480)
+            // تسامح نص ثانية: أسرع بكثير، والفرق ما ينلاحظ في صورة مصغّرة
+            g.requestedTimeToleranceBefore = CMTime(seconds: 0.6, preferredTimescale: 600)
+            g.requestedTimeToleranceAfter = CMTime(seconds: 0.6, preferredTimescale: 600)
+            previewGenerator = FrameGeneratorBox(g)
+            previewGeneratorItem = item
+        }
+        guard let box = previewGenerator else { return nil }
+        previewBusy = true
+        let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
+        let image = await withCheckedContinuation { (done: CheckedContinuation<UIImage?, Never>) in
+            // copyCGImage يحجز مكان: نخليه على خيط خلفي عشان السحب ما يعلّق
+            DispatchQueue.global(qos: .userInitiated).async {
+                let cg = try? box.generator.copyCGImage(at: time, actualTime: nil)
+                done.resume(returning: cg.map { UIImage(cgImage: $0) })
+            }
+        }
+        previewBusy = false
+        return image
+    }
+
     private func startTicking() {
         tick?.cancel()
         tick = Task { [weak self] in
@@ -602,4 +635,11 @@ extension NativeEngine: AVPictureInPictureControllerDelegate {
         }
         completionHandler(true)
     }
+}
+
+/// حاوية صورة الإطار: AVAssetImageGenerator مو Sendable، وهذا يحملها لخيط خلفي بدون ما نخرّب
+/// قواعد Swift 6 (نستخدمها من خيط واحد بالمرة، وحارس previewBusy يمنع التزامن)
+private final class FrameGeneratorBox: @unchecked Sendable {
+    let generator: AVAssetImageGenerator
+    init(_ generator: AVAssetImageGenerator) { self.generator = generator }
 }

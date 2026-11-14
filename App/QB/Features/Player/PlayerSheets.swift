@@ -297,3 +297,136 @@ struct HealthDot: View {
         }
     }
 }
+
+/// شكل الترجمة من داخل المشغّل: الحجم والوزن والخلفية والمكان، وكل تغيير ينحفظ فورًا
+/// ويبان على الفيديو اللي ورا الشيت (المعاينة حية، مو صورة ثابتة)
+struct SubtitleStyleSheet: View {
+    @Environment(AppModel.self) private var app
+
+    private let sizes: (min: Double, max: Double) = (0.7, 1.8)
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    sample
+                        .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                        .listRowBackground(Color.clear)
+                }
+
+                Section(L("الحجم")) {
+                    HStack(spacing: 12) {
+                        Text(verbatim: "A").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                        Slider(value: Binding(get: { app.subtitleSize }, set: { v in
+                            app.subtitleSize = (v * 10).rounded() / 10
+                        }), in: sizes.min...sizes.max, step: 0.1) { editing in
+                            if !editing { app.save("subtitle_size", String(format: "%.1f", app.subtitleSize)) }
+                        } label: {
+                            EmptyView()
+                        }
+                        Text(verbatim: "\(Int((app.subtitleSize * 100).rounded()))%")
+                            .font(Typo.caption).monospacedDigit()
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                }
+
+                Section(L("الوزن")) {
+                    Picker(L("الوزن"), selection: Binding(get: { app.subtitleWeight }, set: { v in
+                        app.subtitleWeight = v
+                        app.save("subtitle_weight", String(v))
+                        Haptics.tap()
+                    })) {
+                        Text(L("عادي")).tag(0)
+                        Text(L("سميك")).tag(1)
+                        Text(L("عريض")).tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                Section(L("الخلفية")) {
+                    Picker(L("الخلفية"), selection: Binding(get: { app.subtitleStyle }, set: { v in
+                        app.subtitleStyle = v
+                        app.subtitleBackground = (v == 1)
+                        app.save("subtitle_style", String(v))
+                        app.save("subtitle_background", v == 1 ? "1" : "0")
+                        Haptics.tap()
+                    })) {
+                        Text(L("ظل")).tag(0)
+                        Text(L("صندوق")).tag(1)
+                        Text(L("بدون")).tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                Section {
+                    Picker(L("المكان"), selection: Binding(get: { Self.positionStep(app.subtitlePosition) }, set: { v in
+                        app.subtitlePosition = v
+                        app.save("subtitle_position", String(format: "%.2f", v))
+                        Haptics.tap()
+                    })) {
+                        Text(L("منخفض")).tag(0)
+                        Text(L("وسط")).tag(1)
+                        Text(L("مرتفع")).tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                } header: {
+                    Text(L("المكان"))
+                } footer: {
+                    Text(L("المعاينة فوق حية: الترجمة على الفيديو تتغيّر وأنت تعدّل."))
+                }
+
+                Section {
+                    Button(L("رجّع الشكل الافتراضي")) {
+                        app.subtitleSize = 1.0
+                        app.subtitleWeight = 1
+                        app.subtitleStyle = 0
+                        app.subtitleBackground = false
+                        app.subtitlePosition = 1.0
+                        app.save("subtitle_size", "1.0")
+                        app.save("subtitle_weight", "1")
+                        app.save("subtitle_style", "0")
+                        app.save("subtitle_background", "0")
+                        app.save("subtitle_position", "1.00")
+                        Haptics.notifySuccess()
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .navigationTitle(L("شكل الترجمة"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    /// 0 منخفض، 1 وسط، 2 مرتفع
+    private static func positionStep(_ value: Double) -> Int {
+        if value < 0.9 { return 0 }
+        if value > 1.15 { return 2 }
+        return 1
+    }
+
+    private var sample: some View {
+        ZStack {
+            LinearGradient(colors: [Color(red: 0.15, green: 0.20, blue: 0.27),
+                                    Color(red: 0.36, green: 0.29, blue: 0.21)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            SubtitleOverlay(text: L("ما عاد فيه وقت نضيّعه."),
+                            scale: app.subtitleSize * 0.8,
+                            weight: app.subtitleWeight,
+                            style: app.subtitleStyle)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
+        }
+        .frame(height: 118)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Palette.hairline, lineWidth: 1)
+        }
+        .animation(Motion.standard, value: app.subtitleStyle)
+        .animation(Motion.standard, value: app.subtitleWeight)
+    }
+}
