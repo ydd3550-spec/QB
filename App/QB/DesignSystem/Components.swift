@@ -236,13 +236,26 @@ struct TagBadge: View {
 /// نبضة تحميل خفيفة بدل الدوّارة
 struct SkeletonBlock: View {
     var cornerRadius: CGFloat = 14
-    @State private var dim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase: CGFloat = -1
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             .fill(Palette.surface)
-            .opacity(dim ? 0.55 : 1)
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { geo in
+                        LinearGradient(colors: [.clear, .white.opacity(0.18), .clear],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: geo.size.width * 0.6)
+                            .offset(x: phase * geo.size.width * 1.6)
+                            .blendMode(.plusLighter)
+                    }
+                    .clipped()
+                }
+            }
             .onAppear {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) { phase = 1 }
             }
     }
 }
