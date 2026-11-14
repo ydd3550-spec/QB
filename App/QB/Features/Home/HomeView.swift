@@ -5,6 +5,7 @@ import QBCore
 struct HomeView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var zoom
     // من الجلسة لو انبنت الرئيسية من جديد (رجوع من البحث وغيره): نفس الرفوف بدون تحميل ولا حركة
     @State private var rows: [CatalogRow] = HeroCache.sessionRows
@@ -126,7 +127,11 @@ struct HomeView: View {
         if !ready, heroItem != nil { return }
         HeroCache.pin(pick)
         if animated {
-            withAnimation(.easeInOut(duration: 0.6)) { heroItem = pick }
+            if reduceMotion {
+                heroItem = pick
+            } else {
+                withAnimation(.easeInOut(duration: 0.6)) { heroItem = pick }
+            }
         } else {
             var t = Transaction()
             t.disablesAnimations = true
@@ -262,6 +267,13 @@ struct HeroBanner: View {
             .matchedTransitionSource(id: ref.zoomID, in: namespace)
         }
         .buttonStyle(.plain)
+        // parallax خفيف: الصورة تتحرك ببطء وقت التمرير عشان عمق 3D
+        .scrollTransition(.animated(threshold: .visible(0.3))) { content, phase in
+            content
+                .offset(y: phase.value * -24)
+                .scaleEffect(1 + (phase.value < 0 ? phase.value * -0.04 : 0))
+                .opacity(1 - abs(phase.value) * 0.15)
+        }
     }
 }
 
