@@ -153,7 +153,11 @@ final class SearchModel {
             for await row in listener.stream {
                 if Task.isCancelled { break }
                 guard !row.items.isEmpty else { continue }
-                withAnimation(Motion.standard) { rows.append(row) }
+                if UIAccessibility.isReduceMotionEnabled {
+                    rows.append(row)
+                } else {
+                    withAnimation(Motion.standard) { rows.append(row) }
+                }
                 ImagePipeline.shared.prefetch(row.items.map(\.poster), maxPixel: 360)
             }
         } onCancel: {
